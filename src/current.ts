@@ -20,9 +20,11 @@ export interface CurrentDocumentSummary {
   activeDocument: {
     title: string | null;
     path: string | null;
+    shellQuotedPath: string | null;
     kind: string | null;
     contentMode: string | null;
     contentPath: string;
+    shellQuotedContentPath: string;
     lineMapping: unknown;
   };
   selection: CurrentDocumentSelection | null;
@@ -54,6 +56,10 @@ function readJsonObject(filePath: string): ManifestRecord {
 
 function stringField(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function quoteForPosixShell(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function statMtimeMs(filePath: string): number {
@@ -206,16 +212,19 @@ export function readCurrentDocumentSummary(manifestPath = findCurrentContextMani
   }
   const sessionDir = path.dirname(manifestPath);
   assertInsideDirectory(contentPath, sessionDir);
+  const sourcePath = stringField(documentRecord.path);
 
   return {
     manifestPath,
     updatedAt: stringField(manifest.updatedAt),
     activeDocument: {
       title: stringField(documentRecord.title),
-      path: stringField(documentRecord.path),
+      path: sourcePath,
+      shellQuotedPath: stringField(documentRecord.shellQuotedPath) ?? (sourcePath ? quoteForPosixShell(sourcePath) : null),
       kind: stringField(documentRecord.kind),
       contentMode: stringField(documentRecord.contentMode),
       contentPath,
+      shellQuotedContentPath: stringField(documentRecord.shellQuotedContentPath) ?? quoteForPosixShell(contentPath),
       lineMapping: documentRecord.lineMapping ?? null,
     },
     selection: readSelection(manifest.selection, sessionDir),
@@ -233,16 +242,20 @@ export function readCurrentDocumentContext(manifestPath = findCurrentContextMani
 }
 
 export function formatCurrentDocumentContext(context: CurrentDocumentContext): string {
+  const quotedSource = context.activeDocument.shellQuotedPath ?? '(unknown)';
   const lines = [
     '# Field Theory Current Document',
     '',
     `title: ${context.activeDocument.title ?? '(untitled)'}`,
-    `source: ${context.activeDocument.path ?? '(unknown)'}`,
+    'readCurrentCommand: ft current --content-only',
+    'editCurrentCommand: ft current update --file <temp-file>',
+    `source: ${quotedSource}`,
+    `readSourceCommand: ${context.activeDocument.path ? `cat ${quotedSource}` : '(unknown)'}`,
     `kind: ${context.activeDocument.kind ?? '(unknown)'}`,
     `contentMode: ${context.activeDocument.contentMode ?? '(unknown)'}`,
     `updatedAt: ${context.updatedAt ?? '(unknown)'}`,
     `manifest: ${context.manifestPath}`,
-    `content: ${context.activeDocument.contentPath}`,
+    `content: ${context.activeDocument.shellQuotedContentPath}`,
     `lineMapping: ${context.activeDocument.lineMapping ? 'available' : '(none)'}`,
     '',
     '---',
@@ -254,14 +267,18 @@ export function formatCurrentDocumentContext(context: CurrentDocumentContext): s
 }
 
 export function formatCurrentDocumentSummary(context: CurrentDocumentSummary): string {
+  const quotedSource = context.activeDocument.shellQuotedPath ?? '(unknown)';
   return [
     `title: ${context.activeDocument.title ?? '(untitled)'}`,
-    `source: ${context.activeDocument.path ?? '(unknown)'}`,
+    'readCurrentCommand: ft current --content-only',
+    'editCurrentCommand: ft current update --file <temp-file>',
+    `source: ${quotedSource}`,
+    `readSourceCommand: ${context.activeDocument.path ? `cat ${quotedSource}` : '(unknown)'}`,
     `kind: ${context.activeDocument.kind ?? '(unknown)'}`,
     `contentMode: ${context.activeDocument.contentMode ?? '(unknown)'}`,
     `updatedAt: ${context.updatedAt ?? '(unknown)'}`,
     `manifest: ${context.manifestPath}`,
-    `content: ${context.activeDocument.contentPath}`,
+    `content: ${context.activeDocument.shellQuotedContentPath}`,
     `lineMapping: ${context.activeDocument.lineMapping ? 'available' : '(none)'}`,
     '',
   ].join('\n');

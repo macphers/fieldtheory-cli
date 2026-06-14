@@ -199,6 +199,27 @@ test('readCurrentDocumentSummary exposes active document line mapping', () => {
   }
 });
 
+test('formatCurrentDocumentSummary prints shell-safe current document commands', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-shell-'));
+  try {
+    const sessionsDir = path.join(tmpDir, 'sessions');
+    const manifestPath = writeContext(sessionsDir, 'session', 'Sunday Jun 14th', 'body', '2026-01-01T00:00:00.000Z');
+
+    const summary = readCurrentDocumentSummary(manifestPath);
+    assert.equal(summary.activeDocument.path, '/library/Sunday Jun 14th.md');
+    assert.equal(summary.activeDocument.shellQuotedPath, "'/library/Sunday Jun 14th.md'");
+
+    const output = formatCurrentDocumentSummary(summary);
+    assert.match(output, /readCurrentCommand: ft current --content-only/);
+    assert.match(output, /editCurrentCommand: ft current update --file <temp-file>/);
+    assert.match(output, /source: '\/library\/Sunday Jun 14th\.md'/);
+    assert.match(output, /readSourceCommand: cat '\/library\/Sunday Jun 14th\.md'/);
+    assert.doesNotMatch(output, /^source: \/library\/Sunday Jun 14th\.md$/m);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('readCurrentDocumentContext rejects content paths outside the session directory', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-'));
   try {
