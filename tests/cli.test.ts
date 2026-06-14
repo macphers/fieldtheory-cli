@@ -388,6 +388,105 @@ test('ft current keeps document content opt-in for model-facing JSON', async () 
   }
 });
 
+test('ft current update edits the active Library document without passing its path', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-update-'));
+  const previousLibraryDir = process.env.FT_LIBRARY_DIR;
+  const previousExitCode = process.exitCode;
+  try {
+    const libraryDir = path.join(tmpDir, 'library');
+    const sourcePath = path.join(libraryDir, 'scratchpad', 'Sunday Jun 14th.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    const initialContent = '[] cameras installed at home\n[] figure out car seats\n';
+    const updatedContent = '- cameras installed at home\n- figure out car seats\n';
+    const updatePath = path.join(tmpDir, 'updated.md');
+    process.env.FT_LIBRARY_DIR = libraryDir;
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, initialContent);
+    fs.writeFileSync(contentPath, initialContent);
+    fs.writeFileSync(updatePath, updatedContent);
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    const output = await captureStdout(async () => {
+      await buildCli().parseAsync(['node', 'ft', 'current', 'update', '--manifest', manifestPath, '--file', updatePath, '--json']);
+    });
+
+    assert.equal(fs.readFileSync(sourcePath, 'utf-8'), updatedContent);
+    const jsonStart = output.indexOf('{\n  "path"');
+    assert.notEqual(jsonStart, -1);
+    assert.equal(JSON.parse(output.slice(jsonStart)).path, sourcePath);
+  } finally {
+    if (previousLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = previousLibraryDir;
+    process.exitCode = previousExitCode;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('ft current update honors explicit expected hashes', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-update-guard-'));
+  const previousLibraryDir = process.env.FT_LIBRARY_DIR;
+  const previousExitCode = process.exitCode;
+  try {
+    const libraryDir = path.join(tmpDir, 'library');
+    const sourcePath = path.join(libraryDir, 'scratchpad', 'Sunday Jun 14th.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    const updatePath = path.join(tmpDir, 'updated.md');
+    process.env.FT_LIBRARY_DIR = libraryDir;
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, 'current source\n');
+    fs.writeFileSync(contentPath, 'rendered context may differ\n');
+    fs.writeFileSync(updatePath, 'agent update\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    const stderr = await captureStderr(async () => {
+      await buildCli().parseAsync([
+        'node',
+        'ft',
+        'current',
+        'update',
+        '--manifest',
+        manifestPath,
+        '--file',
+        updatePath,
+        '--expected-sha256',
+        '0000000000000000000000000000000000000000000000000000000000000000',
+      ]);
+    });
+
+    assert.match(stderr, /File changed on disk/);
+    assert.equal(process.exitCode, 1);
+    assert.equal(fs.readFileSync(sourcePath, 'utf-8'), 'current source\n');
+  } finally {
+    if (previousLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = previousLibraryDir;
+    process.exitCode = previousExitCode;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('ft current reports missing context without a stack trace', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-missing-'));
   const previousHome = process.env.HOME;

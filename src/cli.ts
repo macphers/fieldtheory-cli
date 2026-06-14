@@ -40,6 +40,7 @@ import { registerCompanionCommands } from './companion-cli.js';
 import { getPathReport } from './field-status.js';
 import { formatAgentContext, getAgentContext } from './agent-context.js';
 import { formatCurrentDocumentSummary, readCurrentDocumentContext, readCurrentDocumentSummary } from './current.js';
+import { updateLibraryDocument } from './library.js';
 import { formatWorkflowState, getWorkflowState } from './workflow-state.js';
 import {
   appendNavigationDocument,
@@ -492,6 +493,7 @@ function isInternalWorkerCommand(command: Command): boolean {
 function shouldSkipCommandChrome(command: Command): boolean {
   if (isInternalWorkerCommand(command)) return true;
   if (command.opts().json) return true;
+  if (command.parent?.name() === 'current') return true;
   if ([
     'path', 'paths', 'current', 'recent', 'state', 'ls', 'tree', 'find', 'grep', 'cat',
     'head', 'meta', 'pwd', 'context', 'open', 'tab', 'reveal', 'link', 'links',
@@ -1928,7 +1930,7 @@ export function buildCli() {
       else process.stdout.write(formatNavigationState(state));
     }));
 
-  program
+  const currentCommand = program
     .command('current')
     .description('Show the active Field Theory document attached to the Mac app terminal')
     .option('--manifest <path>', 'Read a specific context manifest')
@@ -1948,6 +1950,36 @@ export function buildCli() {
         return;
       }
       process.stdout.write(formatCurrentDocumentSummary(context));
+    }));
+
+  currentCommand
+    .command('update')
+    .description('Update the active Field Theory Library document with stdin or file content')
+    .option('--manifest <path>', 'Read a specific context manifest')
+    .option('--stdin', 'Read markdown content from stdin')
+    .option('--file <path>', 'Read markdown content from a file')
+    .option('--expected-sha256 <hash>', 'Only update if the current source file hash matches')
+    .option('--force', 'Overwrite without checking an expected hash')
+    .option('--json', 'JSON output')
+    .action(safe(async (options, command) => {
+      if (!options.stdin && !options.file) throw new Error('Pass --stdin or --file for update content.');
+      const parentOptions = command.parent?.opts() ?? {};
+      const manifest = options.manifest || parentOptions.manifest;
+      const context = readCurrentDocumentContext(manifest);
+      const targetPath = context.activeDocument.path;
+      if (!targetPath) throw new Error('Active Field Theory context has no source path to update.');
+      const doc = await updateLibraryDocument(targetPath, {
+        stdin: Boolean(options.stdin),
+        file: options.file ? String(options.file) : undefined,
+        expectedSha256: options.expectedSha256 ? String(options.expectedSha256) : undefined,
+        force: Boolean(options.force || !options.expectedSha256),
+      });
+      if (options.json || parentOptions.json) {
+        printJson(doc);
+        return;
+      }
+      console.log(`Updated: ${doc.path}`);
+      console.log(`sha256: ${doc.version.sha256}`);
     }));
 
   program
