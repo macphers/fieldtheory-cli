@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { legacyCodexContextSessionsDir, runtimeContextSessionStatePath, runtimeContextSessionsDir } from './paths.js';
+import { isPathInside } from './document-ops.js';
+import { canonicalLibraryDir, legacyCodexContextSessionsDir, runtimeContextSessionStatePath, runtimeContextSessionsDir } from './paths.js';
 
 export interface CurrentDocumentSelection {
   textPath: string;
@@ -17,8 +18,8 @@ export interface CurrentDocumentRelatedPage {
 export interface CurrentDocumentCommands {
   readContent: string;
   updateFromFile: string;
-  updateFromStdin: string;
-  readSource: string | null;
+  transformWithPipe: string;
+  plainBulletsToUncheckedTodos: string;
   note: string;
 }
 
@@ -30,6 +31,7 @@ export interface CurrentDocumentSummary {
     title: string | null;
     path: string | null;
     shellQuotedPath: string | null;
+    shellEscapedPath: string | null;
     kind: string | null;
     contentMode: string | null;
     contentPath: string;
@@ -71,13 +73,17 @@ function quoteForPosixShell(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function currentDocumentCommands(quotedSourcePath: string | null): CurrentDocumentCommands {
+function escapeForPosixShellToken(value: string): string {
+  return value.replace(/([\\\s"'`$!&;()<>|*?\[\]{}])/g, '\\$1');
+}
+
+function currentDocumentCommands(): CurrentDocumentCommands {
   return {
     readContent: 'ft current --content-only',
     updateFromFile: 'ft current update --file <temp-file>',
-    updateFromStdin: 'ft current update --stdin',
-    readSource: quotedSourcePath ? `cat ${quotedSourcePath}` : null,
-    note: 'To edit the active document, write the complete updated markdown to a temp file, then run updateFromFile. Avoid shelling against activeDocument.path because it may contain spaces.',
+    transformWithPipe: 'ft current update --pipe <command>',
+    plainBulletsToUncheckedTodos: 'ft current update --pipe "sed \'s/^- /- [ ] /\'"',
+    note: 'For the active document body, run readContent exactly. Do not run cat/sed/open on activeDocument.path; it is display metadata and may contain spaces. For mechanical edits, prefer transformWithPipe or a specific command example; otherwise write complete markdown to a temp file, then run updateFromFile.',
   };
 }
 
@@ -233,15 +239,17 @@ export function readCurrentDocumentSummary(manifestPath = findCurrentContextMani
   assertInsideDirectory(contentPath, sessionDir);
   const sourcePath = stringField(documentRecord.path);
   const shellQuotedPath = stringField(documentRecord.shellQuotedPath) ?? (sourcePath ? quoteForPosixShell(sourcePath) : null);
+  const shellEscapedPath = sourcePath ? escapeForPosixShellToken(sourcePath) : null;
 
   return {
     manifestPath,
     updatedAt: stringField(manifest.updatedAt),
-    commands: currentDocumentCommands(shellQuotedPath),
+    commands: currentDocumentCommands(),
     activeDocument: {
       title: stringField(documentRecord.title),
       path: sourcePath,
       shellQuotedPath,
+      shellEscapedPath,
       kind: stringField(documentRecord.kind),
       contentMode: stringField(documentRecord.contentMode),
       contentPath,
@@ -256,9 +264,14 @@ export function readCurrentDocumentSummary(manifestPath = findCurrentContextMani
 
 export function readCurrentDocumentContext(manifestPath = findCurrentContextManifest()): CurrentDocumentContext {
   const summary = readCurrentDocumentSummary(manifestPath);
+  const sourcePath = summary.activeDocument.path;
+  const contentPath = sourcePath && isPathInside(canonicalLibraryDir(), sourcePath) && fs.existsSync(sourcePath)
+    ? sourcePath
+    : summary.activeDocument.contentPath;
+
   return {
     ...summary,
-    content: fs.readFileSync(summary.activeDocument.contentPath, 'utf-8'),
+    content: fs.readFileSync(contentPath, 'utf-8'),
   };
 }
 
@@ -288,11 +301,15 @@ export function formatCurrentDocumentContext(context: CurrentDocumentContext): s
 }
 
 export function formatCurrentDocumentJson<T extends CurrentDocumentSummary>(context: T): T {
+  const shellEscapedPath = context.activeDocument.shellEscapedPath ?? context.activeDocument.shellQuotedPath ?? context.activeDocument.path;
   return {
     ...context,
     activeDocument: {
       ...context.activeDocument,
-      path: context.activeDocument.shellQuotedPath ?? context.activeDocument.path,
+      path: shellEscapedPath,
+      lineMapping: context.activeDocument.lineMapping
+        ? { available: true, note: 'Line mapping text is omitted from model-facing JSON. Run commands.readContent for current source text.' }
+        : null,
     },
   };
 }

@@ -374,6 +374,8 @@ test('ft current keeps document content opt-in for model-facing JSON', async () 
     assert.equal(summary.content, undefined);
     assert.equal(summary.commands.readContent, 'ft current --content-only');
     assert.equal(summary.commands.updateFromFile, 'ft current update --file <temp-file>');
+    assert.equal(summary.commands.transformWithPipe, 'ft current update --pipe <command>');
+    assert.equal(summary.commands.plainBulletsToUncheckedTodos, 'ft current update --pipe "sed \'s/^- /- [ ] /\'"');
 
     const contentOutput = await captureStdout(async () => {
       await buildCli().parseAsync(['node', 'ft', 'current', '--manifest', manifestPath, '--content-only']);
@@ -385,6 +387,44 @@ test('ft current keeps document content opt-in for model-facing JSON', async () 
     });
     assert.match(JSON.parse(fullOutput).content, /private working text/);
   } finally {
+    process.exitCode = previousExitCode;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('ft current --content-only reads the active source file when available', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-source-cli-'));
+  const previousLibraryDir = process.env.FT_LIBRARY_DIR;
+  const previousExitCode = process.exitCode;
+  try {
+    const libraryDir = path.join(tmpDir, 'library');
+    const sourcePath = path.join(libraryDir, 'scratchpad', 'Sunday Jun 14th.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    process.env.FT_LIBRARY_DIR = libraryDir;
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, '- real source\n');
+    fs.writeFileSync(contentPath, '- stale context\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    const output = await captureStdout(async () => {
+      await buildCli().parseAsync(['node', 'ft', 'current', '--manifest', manifestPath, '--content-only']);
+    });
+
+    assert.equal(output, '- real source\n');
+  } finally {
+    if (previousLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = previousLibraryDir;
     process.exitCode = previousExitCode;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -427,9 +467,12 @@ test('ft current prints shell-safe commands for active documents with spaces', a
     const parsed = JSON.parse(jsonOutput);
     assert.equal(parsed.commands.readContent, 'ft current --content-only');
     assert.equal(parsed.commands.updateFromFile, 'ft current update --file <temp-file>');
-    assert.equal(parsed.commands.readSource, "cat '/library/Sunday Jun 14th.md'");
-    assert.match(parsed.commands.note, /Avoid shelling against activeDocument\.path/);
-    assert.equal(parsed.activeDocument.path, "'/library/Sunday Jun 14th.md'");
+    assert.equal(parsed.commands.transformWithPipe, 'ft current update --pipe <command>');
+    assert.equal(parsed.commands.plainBulletsToUncheckedTodos, 'ft current update --pipe "sed \'s/^- /- [ ] /\'"');
+    assert.equal('readSource' in parsed.commands, false);
+    assert.match(parsed.commands.note, /Do not run cat\/sed\/open on activeDocument\.path/);
+    assert.equal(parsed.activeDocument.path, '/library/Sunday\\ Jun\\ 14th.md');
+    assert.equal(parsed.activeDocument.shellEscapedPath, '/library/Sunday\\ Jun\\ 14th.md');
   } finally {
     process.exitCode = previousExitCode;
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -474,6 +517,137 @@ test('ft current update edits the active Library document without passing its pa
     const jsonStart = output.indexOf('{\n  "path"');
     assert.notEqual(jsonStart, -1);
     assert.equal(JSON.parse(output.slice(jsonStart)).path, sourcePath);
+  } finally {
+    if (previousLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = previousLibraryDir;
+    process.exitCode = previousExitCode;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('ft current update can transform the active document without shelling against its path', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-update-pipe-'));
+  const previousLibraryDir = process.env.FT_LIBRARY_DIR;
+  const previousExitCode = process.exitCode;
+  try {
+    const libraryDir = path.join(tmpDir, 'library');
+    const sourcePath = path.join(libraryDir, 'scratchpad', 'Sunday Jun 14th.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    process.env.FT_LIBRARY_DIR = libraryDir;
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, '- cameras installed at home\n- figure out car seats\n');
+    fs.writeFileSync(contentPath, '- stale context\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    await captureStdout(async () => {
+      await buildCli().parseAsync([
+        'node',
+        'ft',
+        'current',
+        'update',
+        '--manifest',
+        manifestPath,
+        '--pipe',
+        "sed 's/^- /- [ ] /'",
+      ]);
+    });
+
+    assert.equal(fs.readFileSync(sourcePath, 'utf-8'), '- [ ] cameras installed at home\n- [ ] figure out car seats\n');
+  } finally {
+    if (previousLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = previousLibraryDir;
+    process.exitCode = previousExitCode;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('ft current update refuses to blank the active document', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-update-empty-'));
+  const previousLibraryDir = process.env.FT_LIBRARY_DIR;
+  const previousExitCode = process.exitCode;
+  try {
+    const libraryDir = path.join(tmpDir, 'library');
+    const sourcePath = path.join(libraryDir, 'scratchpad', 'Sunday Jun 14th.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    const emptyPath = path.join(tmpDir, 'empty.md');
+    process.env.FT_LIBRARY_DIR = libraryDir;
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, 'current source\n');
+    fs.writeFileSync(contentPath, 'current source\n');
+    fs.writeFileSync(emptyPath, '');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    const stderr = await captureStderr(async () => {
+      await buildCli().parseAsync(['node', 'ft', 'current', 'update', '--manifest', manifestPath, '--file', emptyPath]);
+    });
+
+    assert.match(stderr, /Refusing to replace the active Field Theory document with empty content/);
+    assert.equal(process.exitCode, 1);
+    assert.equal(fs.readFileSync(sourcePath, 'utf-8'), 'current source\n');
+  } finally {
+    if (previousLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = previousLibraryDir;
+    process.exitCode = previousExitCode;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('ft current update refuses no-op active document updates', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-update-noop-'));
+  const previousLibraryDir = process.env.FT_LIBRARY_DIR;
+  const previousExitCode = process.exitCode;
+  try {
+    const libraryDir = path.join(tmpDir, 'library');
+    const sourcePath = path.join(libraryDir, 'scratchpad', 'Sunday Jun 14th.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    const updatePath = path.join(tmpDir, 'same.md');
+    process.env.FT_LIBRARY_DIR = libraryDir;
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, 'current source\n');
+    fs.writeFileSync(contentPath, 'current source\n');
+    fs.writeFileSync(updatePath, 'current source\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    const stderr = await captureStderr(async () => {
+      await buildCli().parseAsync(['node', 'ft', 'current', 'update', '--manifest', manifestPath, '--file', updatePath]);
+    });
+
+    assert.match(stderr, /Refusing no-op active document update/);
+    assert.equal(process.exitCode, 1);
+    assert.equal(fs.readFileSync(sourcePath, 'utf-8'), 'current source\n');
   } finally {
     if (previousLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
     else process.env.FT_LIBRARY_DIR = previousLibraryDir;

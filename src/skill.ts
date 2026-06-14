@@ -37,13 +37,15 @@ Field Theory has three main local surfaces:
 1. Check paths and status when setup matters: \`ft paths --json\`, \`ft status --json\`
 2. When the user asks what Field Theory document they are looking at, run \`ft current --json\`; use the returned \`commands.readContent\` when the document body is needed
 3. When the user asks to edit the active Field Theory document, read it with \`ft current --content-only\`, write the complete updated markdown to a temp file, then run \`ft current update --file <temp-file>\`
-4. Check repo workflow state when branch/worktree/PR shape matters: \`ft state --json\`
-5. When the user says "that file" or "the recent file", inspect current repo recency with \`ft recent --json\`
-6. Search durable notes first when prior project knowledge matters: \`ft library search <query> --json\`
-7. Search bookmarks when reading history or saved X/Twitter posts matter: \`ft search <query> --json\`
-8. Inspect exact files or bookmarks with \`ft library show <path> --json\`, \`ft show <id> --json\`, or \`ft commands show <name> --json\`
-9. Create or update durable Library notes and portable commands only when the user asks for a saved artifact
-10. Open useful Library pages in the Mac app with \`ft library open <path>\`
+4. For mechanical active-document edits, use \`ft current update --pipe <command>\`; this pipes the active source into the command and writes stdout back without shelling against the file path
+   - Example: convert plain bullets to unchecked todos with \`ft current update --pipe "sed 's/^- /- [ ] /'"\`
+5. Check repo workflow state when branch/worktree/PR shape matters: \`ft state --json\`
+6. When the user says "that file" or "the recent file", inspect current repo recency with \`ft recent --json\`
+7. Search durable notes first when prior project knowledge matters: \`ft library search <query> --json\`
+8. Search bookmarks when reading history or saved X/Twitter posts matter: \`ft search <query> --json\`
+9. Inspect exact files or bookmarks with \`ft library show <path> --json\`, \`ft show <id> --json\`, or \`ft commands show <name> --json\`
+10. Create or update durable Library notes and portable commands only when the user asks for a saved artifact
+11. Open useful Library pages in the Mac app with \`ft library open <path>\`
 
 ## Possible Roadmap Workflow
 
@@ -96,6 +98,8 @@ ft status --json               # Bookmark/classification status plus paths
 ft current --json              # Active Field Theory document metadata without the full body
 ft current --content-only      # Active document body when the user/model actually needs it
 ft current update --file <tmp> # Replace the active source document with complete updated markdown
+ft current update --pipe <cmd> # Transform the active source by piping it through a command
+ft current update --pipe "sed 's/^- /- [ ] /'" # Convert plain bullets to unchecked todos
 ft state --json                # Repo workflow state: root, workers, PRs, cleanup, next step
 ft recent --json               # Current repo last-modified file and recent files for agent references
 
@@ -133,6 +137,7 @@ Combine filters: \`ft list --category tool --domain ai --limit 10\`
 ## Guidelines
 
 - Prefer JSON output when you need to inspect or cite exact fields
+- For active-document reads and edits, never run \`cat\`, \`sed\`, or another shell command against \`activeDocument.path\`; use \`ft current --content-only\`, \`ft current update --pipe <command>\`, or \`ft current update --file <temp-file>\`
 - Start with Library pages for durable project knowledge, then search bookmarks for source material
 - Don't dump raw output; summarize and connect findings to the user's current work
 - Cross-reference multiple queries to build a complete picture
@@ -140,7 +145,6 @@ Combine filters: \`ft list --category tool --domain ai --limit 10\`
 - Ground roadmap work in actual bookmark-backed seeds
 - Lead roadmap reports with the plotted grid and concrete next actions, not just prose
 - For updates, use \`--expected-sha256\` from a prior \`show --json\` result or pass \`--force\` only when explicitly appropriate
-- For active-document edits, do not use raw \`activeDocument.path\` in shell commands; it may contain spaces. Use \`ft current --content-only\` and \`ft current update --file <temp-file>\`
 - In local app development, set \`FT_APP_DEV_DIR\` before \`ft library open\` so the CLI targets the Field Theory dev checkout instead of a generic Electron URL handler
 - Deletes move local files to Trash; the Mac app owns Library sync and remote tombstones
 `;

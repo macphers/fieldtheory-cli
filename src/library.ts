@@ -42,6 +42,8 @@ export interface LibraryWriteInput {
 export interface LibraryUpdateInput extends LibraryWriteInput {
   expectedSha256?: string;
   force?: boolean;
+  rejectEmptyContent?: boolean;
+  rejectUnchangedContent?: boolean;
 }
 
 export interface LibraryListOptions {
@@ -196,9 +198,13 @@ export async function createLibraryDocument(target: string, input: LibraryWriteI
 export async function updateLibraryDocument(target: string, input: LibraryUpdateInput): Promise<LibraryDocument> {
   const filePath = resolveLibraryPath(target);
   const content = await readContentInput({ stdin: input.stdin, file: input.file, fallback: input.content });
+  if (input.rejectEmptyContent && content.length === 0) {
+    throw new Error('Refusing to replace the active Field Theory document with empty content.');
+  }
   await updateMarkdownFile(filePath, content, {
     expectedSha256: input.expectedSha256,
     force: input.force,
+    rejectUnchanged: input.rejectUnchangedContent,
   });
   return showLibraryDocument(filePath);
 }

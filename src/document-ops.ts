@@ -13,6 +13,7 @@ export interface DocumentVersion {
 export interface DocumentUpdateOptions {
   expectedSha256?: string;
   force?: boolean;
+  rejectUnchanged?: boolean;
 }
 
 export interface DocumentUpdateResult {
@@ -117,9 +118,13 @@ export async function updateMarkdownFile(filePath: string, content: string, opti
   if (!await pathExists(filePath)) {
     throw new Error(`File not found: ${filePath}`);
   }
+  const currentContent = fs.readFileSync(filePath, 'utf-8');
   const current = readDocumentVersion(filePath);
   if (options.expectedSha256 && current.sha256 !== options.expectedSha256) {
     throw new Error(`File changed on disk. Expected ${options.expectedSha256}, found ${current.sha256}.`);
+  }
+  if (options.rejectUnchanged && content === currentContent) {
+    throw new Error('Refusing no-op active document update because the content is unchanged.');
   }
   if (!options.force && !options.expectedSha256) {
     throw new Error('Refusing to overwrite without --expected-sha256 or --force.');

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command, InvalidArgumentError, Option } from 'commander';
+import { spawn } from 'node:child_process';
 import { syncTwitterBookmarks } from './bookmarks.js';
 import { getBookmarkStatusView, formatBookmarkStatus } from './bookmarks-service.js';
 import { runTwitterOAuthFlow } from './xauth.js';
@@ -312,6 +313,30 @@ function warnIfEmpty(totalBookmarks: number): void {
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+async function pipeContentThroughCommand(command: string, input: string): Promise<string> {
+  if (!command.trim()) throw new Error('--pipe requires a command.');
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+
+    child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString('utf-8'));
+        return;
+      }
+      const message = Buffer.concat(stderr).toString('utf-8').trim();
+      reject(new Error(message || `--pipe command exited with status ${code}`));
+    });
+
+    child.stdin.end(input);
+  });
 }
 
 function formatMarkdownLink(label: string, href: string): string {
@@ -1958,21 +1983,29 @@ export function buildCli() {
     .option('--manifest <path>', 'Read a specific context manifest')
     .option('--stdin', 'Read markdown content from stdin')
     .option('--file <path>', 'Read markdown content from a file')
+    .option('--pipe <command>', 'Transform the active document by piping it through a shell command')
     .option('--expected-sha256 <hash>', 'Only update if the current source file hash matches')
     .option('--force', 'Overwrite without checking an expected hash')
     .option('--json', 'JSON output')
     .action(safe(async (options, command) => {
-      if (!options.stdin && !options.file) throw new Error('Pass --stdin or --file for update content.');
+      const inputCount = [options.stdin, options.file, options.pipe].filter(Boolean).length;
+      if (inputCount !== 1) throw new Error('Pass exactly one of --stdin, --file, or --pipe for update content.');
       const parentOptions = command.parent?.opts() ?? {};
       const manifest = options.manifest || parentOptions.manifest;
       const context = readCurrentDocumentContext(manifest);
       const targetPath = context.activeDocument.path;
       if (!targetPath) throw new Error('Active Field Theory context has no source path to update.');
+      const pipedContent = options.pipe
+        ? await pipeContentThroughCommand(String(options.pipe), context.content)
+        : undefined;
       const doc = await updateLibraryDocument(targetPath, {
         stdin: Boolean(options.stdin),
         file: options.file ? String(options.file) : undefined,
+        content: pipedContent,
         expectedSha256: options.expectedSha256 ? String(options.expectedSha256) : undefined,
         force: Boolean(options.force || !options.expectedSha256),
+        rejectEmptyContent: true,
+        rejectUnchangedContent: true,
       });
       if (options.json || parentOptions.json) {
         printJson(doc);

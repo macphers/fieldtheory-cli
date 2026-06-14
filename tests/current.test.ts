@@ -63,6 +63,39 @@ test('readCurrentDocumentContext reads newest Field Theory context manifest', ()
   }
 });
 
+test('readCurrentDocumentContext prefers the active source file over stale rendered context', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-source-'));
+  const previousLibraryDir = process.env.FT_LIBRARY_DIR;
+  try {
+    const libraryDir = path.join(tmpDir, 'library');
+    const sourcePath = path.join(libraryDir, 'scratchpad', 'Sunday Jun 14th.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    process.env.FT_LIBRARY_DIR = libraryDir;
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, '- real source\n');
+    fs.writeFileSync(contentPath, '- stale rendered context\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      version: 1,
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    assert.equal(readCurrentDocumentContext(manifestPath).content, '- real source\n');
+  } finally {
+    if (previousLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = previousLibraryDir;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('findCurrentContextManifest reads the app runtime context before legacy Library context', () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-home-'));
   const originalHome = process.env.HOME;
@@ -205,18 +238,30 @@ test('formatCurrentDocumentSummary prints shell-safe current document commands',
   try {
     const sessionsDir = path.join(tmpDir, 'sessions');
     const manifestPath = writeContext(sessionsDir, 'session', 'Sunday Jun 14th', 'body', '2026-01-01T00:00:00.000Z');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    manifest.activeDocument.lineMapping = {
+      lines: [{ visibleLine: 1, sourceLine: 1, text: 'rendered line' }],
+    };
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
 
     const summary = readCurrentDocumentSummary(manifestPath);
     assert.equal(summary.activeDocument.path, '/library/Sunday Jun 14th.md');
     assert.equal(summary.activeDocument.shellQuotedPath, "'/library/Sunday Jun 14th.md'");
+    assert.equal(summary.activeDocument.shellEscapedPath, '/library/Sunday\\ Jun\\ 14th.md');
     assert.equal(summary.commands.readContent, 'ft current --content-only');
     assert.equal(summary.commands.updateFromFile, 'ft current update --file <temp-file>');
-    assert.equal(summary.commands.updateFromStdin, 'ft current update --stdin');
-    assert.equal(summary.commands.readSource, "cat '/library/Sunday Jun 14th.md'");
+    assert.equal(summary.commands.transformWithPipe, 'ft current update --pipe <command>');
+    assert.equal(summary.commands.plainBulletsToUncheckedTodos, 'ft current update --pipe "sed \'s/^- /- [ ] /\'"');
+    assert.equal('readSource' in summary.commands, false);
     assert.match(summary.commands.note, /temp file/);
 
     const jsonSummary = formatCurrentDocumentJson(summary);
-    assert.equal(jsonSummary.activeDocument.path, "'/library/Sunday Jun 14th.md'");
+    assert.equal(jsonSummary.activeDocument.path, '/library/Sunday\\ Jun\\ 14th.md');
+    assert.equal('readSource' in jsonSummary.commands, false);
+    assert.deepEqual(jsonSummary.activeDocument.lineMapping, {
+      available: true,
+      note: 'Line mapping text is omitted from model-facing JSON. Run commands.readContent for current source text.',
+    });
     assert.equal(summary.activeDocument.path, '/library/Sunday Jun 14th.md');
 
     const output = formatCurrentDocumentSummary(summary);

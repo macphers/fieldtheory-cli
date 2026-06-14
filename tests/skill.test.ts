@@ -55,7 +55,9 @@ describe('skill content', () => {
     assert.ok(content.includes('commands.readContent'));
     assert.ok(content.includes('ft current --content-only'));
     assert.ok(content.includes('ft current update --file <temp-file>'));
-    assert.ok(content.includes('do not use raw `activeDocument.path`'));
+    assert.ok(content.includes('ft current update --pipe <command>'));
+    assert.ok(content.includes('ft current update --pipe "sed \'s/^- /- [ ] /\'"'));
+    assert.ok(content.includes('never run `cat`, `sed`, or another shell command against `activeDocument.path`'));
   });
 
   it('force install overwrites stale Codex instructions', async () => {
