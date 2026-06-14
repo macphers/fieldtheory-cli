@@ -138,6 +138,7 @@ Combine filters: \`ft list --category tool --domain ai --limit 10\`
 
 - Prefer JSON output when you need to inspect or cite exact fields
 - For active-document reads and edits, never run \`cat\`, \`sed\`, or another shell command against \`activeDocument.path\`; use \`ft current --content-only\`, \`ft current update --pipe <command>\`, or \`ft current update --file <temp-file>\`
+- Field Theory command files are markdown instructions, not shell scripts; when an automation references a \`.md\` command file, read it with \`ft commands show <name>\` or a normal file read instead of executing the path
 - Start with Library pages for durable project knowledge, then search bookmarks for source material
 - Don't dump raw output; summarize and connect findings to the user's current work
 - Cross-reference multiple queries to build a complete picture

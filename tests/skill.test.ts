@@ -58,6 +58,7 @@ describe('skill content', () => {
     assert.ok(content.includes('ft current update --pipe <command>'));
     assert.ok(content.includes('ft current update --pipe "sed \'s/^- /- [ ] /\'"'));
     assert.ok(content.includes('never run `cat`, `sed`, or another shell command against `activeDocument.path`'));
+    assert.ok(content.includes('Field Theory command files are markdown instructions, not shell scripts'));
   });
 
   it('force install overwrites stale Codex instructions', async () => {
