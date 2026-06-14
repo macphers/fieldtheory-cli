@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { skillWithFrontmatter, skillBody } from '../src/skill.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { skillWithFrontmatter, skillBody, installSkill } from '../src/skill.js';
 
 describe('skill content', () => {
   it('skillWithFrontmatter includes YAML frontmatter', () => {
@@ -22,6 +25,7 @@ describe('skill content', () => {
     for (const content of [skillWithFrontmatter(), skillBody()]) {
       assert.ok(content.includes('ft paths --json'));
       assert.ok(content.includes('ft status --json'));
+      assert.ok(content.includes('ft current update --file <tmp>'));
       assert.ok(content.includes('ft search'));
       assert.ok(content.includes('ft list'));
       assert.ok(content.includes('ft stats'));
@@ -44,6 +48,39 @@ describe('skill content', () => {
     assert.ok(content.includes('roadmap plotted in the grid'));
     assert.ok(content.includes('these projects'));
     assert.ok(content.includes('generate -> critique -> score'));
+  });
+
+  it('skill teaches active document edit workflow', () => {
+    const content = skillWithFrontmatter();
+    assert.ok(content.includes('commands.readContent'));
+    assert.ok(content.includes('ft current --content-only'));
+    assert.ok(content.includes('ft current update --file <temp-file>'));
+    assert.ok(content.includes('do not use raw `activeDocument.path`'));
+  });
+
+  it('force install overwrites stale Codex instructions', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-skill-home-'));
+    const previousHome = process.env.HOME;
+    try {
+      const instructionsDir = path.join(homeDir, '.codex', 'instructions');
+      fs.mkdirSync(instructionsDir, { recursive: true });
+      const installPath = path.join(instructionsDir, 'fieldtheory.md');
+      fs.writeFileSync(installPath, '# old bookmark-only skill\n');
+      process.env.HOME = homeDir;
+
+      const results = await installSkill({ force: true });
+
+      assert.deepEqual(results, [{
+        agent: 'Codex',
+        path: installPath,
+        action: 'updated',
+      }]);
+      assert.equal(fs.readFileSync(installPath, 'utf-8'), skillBody());
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 
   it('skill content ends with newline', () => {

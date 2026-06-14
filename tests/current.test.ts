@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   findCurrentContextManifest,
   formatCurrentDocumentContext,
+  formatCurrentDocumentJson,
   formatCurrentDocumentSummary,
   readCurrentDocumentContext,
   readCurrentDocumentSummary,
@@ -208,6 +209,15 @@ test('formatCurrentDocumentSummary prints shell-safe current document commands',
     const summary = readCurrentDocumentSummary(manifestPath);
     assert.equal(summary.activeDocument.path, '/library/Sunday Jun 14th.md');
     assert.equal(summary.activeDocument.shellQuotedPath, "'/library/Sunday Jun 14th.md'");
+    assert.equal(summary.commands.readContent, 'ft current --content-only');
+    assert.equal(summary.commands.updateFromFile, 'ft current update --file <temp-file>');
+    assert.equal(summary.commands.updateFromStdin, 'ft current update --stdin');
+    assert.equal(summary.commands.readSource, "cat '/library/Sunday Jun 14th.md'");
+    assert.match(summary.commands.note, /temp file/);
+
+    const jsonSummary = formatCurrentDocumentJson(summary);
+    assert.equal(jsonSummary.activeDocument.path, "'/library/Sunday Jun 14th.md'");
+    assert.equal(summary.activeDocument.path, '/library/Sunday Jun 14th.md');
 
     const output = formatCurrentDocumentSummary(summary);
     assert.match(output, /readCurrentCommand: ft current --content-only/);

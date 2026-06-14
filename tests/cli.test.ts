@@ -372,6 +372,8 @@ test('ft current keeps document content opt-in for model-facing JSON', async () 
     const summary = JSON.parse(summaryOutput);
     assert.equal(summary.activeDocument.title, 'Current Body');
     assert.equal(summary.content, undefined);
+    assert.equal(summary.commands.readContent, 'ft current --content-only');
+    assert.equal(summary.commands.updateFromFile, 'ft current update --file <temp-file>');
 
     const contentOutput = await captureStdout(async () => {
       await buildCli().parseAsync(['node', 'ft', 'current', '--manifest', manifestPath, '--content-only']);
@@ -417,6 +419,17 @@ test('ft current prints shell-safe commands for active documents with spaces', a
     assert.match(output, /source: '\/library\/Sunday Jun 14th\.md'/);
     assert.match(output, /readSourceCommand: cat '\/library\/Sunday Jun 14th\.md'/);
     assert.doesNotMatch(output, /^source: \/library\/Sunday Jun 14th\.md$/m);
+
+    const jsonOutput = await captureStdout(async () => {
+      await buildCli().parseAsync(['node', 'ft', 'current', '--manifest', manifestPath, '--json']);
+    });
+    assert.ok(jsonOutput.indexOf('"commands"') < jsonOutput.indexOf('"activeDocument"'));
+    const parsed = JSON.parse(jsonOutput);
+    assert.equal(parsed.commands.readContent, 'ft current --content-only');
+    assert.equal(parsed.commands.updateFromFile, 'ft current update --file <temp-file>');
+    assert.equal(parsed.commands.readSource, "cat '/library/Sunday Jun 14th.md'");
+    assert.match(parsed.commands.note, /Avoid shelling against activeDocument\.path/);
+    assert.equal(parsed.activeDocument.path, "'/library/Sunday Jun 14th.md'");
   } finally {
     process.exitCode = previousExitCode;
     fs.rmSync(tmpDir, { recursive: true, force: true });

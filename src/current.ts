@@ -14,9 +14,18 @@ export interface CurrentDocumentRelatedPage {
   contentPath: string | null;
 }
 
+export interface CurrentDocumentCommands {
+  readContent: string;
+  updateFromFile: string;
+  updateFromStdin: string;
+  readSource: string | null;
+  note: string;
+}
+
 export interface CurrentDocumentSummary {
   manifestPath: string;
   updatedAt: string | null;
+  commands: CurrentDocumentCommands;
   activeDocument: {
     title: string | null;
     path: string | null;
@@ -60,6 +69,16 @@ function stringField(value: unknown): string | null {
 
 function quoteForPosixShell(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function currentDocumentCommands(quotedSourcePath: string | null): CurrentDocumentCommands {
+  return {
+    readContent: 'ft current --content-only',
+    updateFromFile: 'ft current update --file <temp-file>',
+    updateFromStdin: 'ft current update --stdin',
+    readSource: quotedSourcePath ? `cat ${quotedSourcePath}` : null,
+    note: 'To edit the active document, write the complete updated markdown to a temp file, then run updateFromFile. Avoid shelling against activeDocument.path because it may contain spaces.',
+  };
 }
 
 function statMtimeMs(filePath: string): number {
@@ -213,14 +232,16 @@ export function readCurrentDocumentSummary(manifestPath = findCurrentContextMani
   const sessionDir = path.dirname(manifestPath);
   assertInsideDirectory(contentPath, sessionDir);
   const sourcePath = stringField(documentRecord.path);
+  const shellQuotedPath = stringField(documentRecord.shellQuotedPath) ?? (sourcePath ? quoteForPosixShell(sourcePath) : null);
 
   return {
     manifestPath,
     updatedAt: stringField(manifest.updatedAt),
+    commands: currentDocumentCommands(shellQuotedPath),
     activeDocument: {
       title: stringField(documentRecord.title),
       path: sourcePath,
-      shellQuotedPath: stringField(documentRecord.shellQuotedPath) ?? (sourcePath ? quoteForPosixShell(sourcePath) : null),
+      shellQuotedPath,
       kind: stringField(documentRecord.kind),
       contentMode: stringField(documentRecord.contentMode),
       contentPath,
@@ -247,8 +268,8 @@ export function formatCurrentDocumentContext(context: CurrentDocumentContext): s
     '# Field Theory Current Document',
     '',
     `title: ${context.activeDocument.title ?? '(untitled)'}`,
-    'readCurrentCommand: ft current --content-only',
-    'editCurrentCommand: ft current update --file <temp-file>',
+    `readCurrentCommand: ${context.commands.readContent}`,
+    `editCurrentCommand: ${context.commands.updateFromFile}`,
     `source: ${quotedSource}`,
     `readSourceCommand: ${context.activeDocument.path ? `cat ${quotedSource}` : '(unknown)'}`,
     `kind: ${context.activeDocument.kind ?? '(unknown)'}`,
@@ -266,12 +287,22 @@ export function formatCurrentDocumentContext(context: CurrentDocumentContext): s
   return `${lines.join('\n')}${context.content.endsWith('\n') ? '' : '\n'}`;
 }
 
+export function formatCurrentDocumentJson<T extends CurrentDocumentSummary>(context: T): T {
+  return {
+    ...context,
+    activeDocument: {
+      ...context.activeDocument,
+      path: context.activeDocument.shellQuotedPath ?? context.activeDocument.path,
+    },
+  };
+}
+
 export function formatCurrentDocumentSummary(context: CurrentDocumentSummary): string {
   const quotedSource = context.activeDocument.shellQuotedPath ?? '(unknown)';
   return [
     `title: ${context.activeDocument.title ?? '(untitled)'}`,
-    'readCurrentCommand: ft current --content-only',
-    'editCurrentCommand: ft current update --file <temp-file>',
+    `readCurrentCommand: ${context.commands.readContent}`,
+    `editCurrentCommand: ${context.commands.updateFromFile}`,
     `source: ${quotedSource}`,
     `readSourceCommand: ${context.activeDocument.path ? `cat ${quotedSource}` : '(unknown)'}`,
     `kind: ${context.activeDocument.kind ?? '(unknown)'}`,

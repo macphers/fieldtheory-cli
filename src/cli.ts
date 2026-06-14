@@ -39,7 +39,7 @@ import { skillWithFrontmatter, installSkill, uninstallSkill } from './skill.js';
 import { registerCompanionCommands } from './companion-cli.js';
 import { getPathReport } from './field-status.js';
 import { formatAgentContext, getAgentContext } from './agent-context.js';
-import { formatCurrentDocumentSummary, readCurrentDocumentContext, readCurrentDocumentSummary } from './current.js';
+import { formatCurrentDocumentJson, formatCurrentDocumentSummary, readCurrentDocumentContext, readCurrentDocumentSummary } from './current.js';
 import { updateLibraryDocument } from './library.js';
 import { formatWorkflowState, getWorkflowState } from './workflow-state.js';
 import {
@@ -1946,7 +1946,7 @@ export function buildCli() {
         ? readCurrentDocumentContext(options.manifest)
         : readCurrentDocumentSummary(options.manifest);
       if (options.json) {
-        printJson(context);
+        printJson(formatCurrentDocumentJson(context));
         return;
       }
       process.stdout.write(formatCurrentDocumentSummary(context));
@@ -3305,8 +3305,9 @@ export function buildCli() {
   skill
     .command('install')
     .description('Install skill for detected agents (Claude Code, Codex)')
-    .action(safe(async () => {
-      const results = await installSkill();
+    .option('--force', 'Overwrite existing skill files without prompting')
+    .action(safe(async (options) => {
+      const results = await installSkill({ force: Boolean(options.force) });
       if (results.length === 0) {
         console.log('  No agents detected. Use `ft skill show` to copy manually.');
         return;

@@ -35,14 +35,15 @@ Field Theory has three main local surfaces:
 ## Search Workflow
 
 1. Check paths and status when setup matters: \`ft paths --json\`, \`ft status --json\`
-2. When the user asks what Field Theory document they are looking at, run \`ft current --json\`; only use \`ft current --content-only\` when the document body is needed
-3. Check repo workflow state when branch/worktree/PR shape matters: \`ft state --json\`
-4. When the user says "that file" or "the recent file", inspect current repo recency with \`ft recent --json\`
-5. Search durable notes first when prior project knowledge matters: \`ft library search <query> --json\`
-6. Search bookmarks when reading history or saved X/Twitter posts matter: \`ft search <query> --json\`
-7. Inspect exact files or bookmarks with \`ft library show <path> --json\`, \`ft show <id> --json\`, or \`ft commands show <name> --json\`
-8. Create or update durable Library notes and portable commands only when the user asks for a saved artifact
-9. Open useful Library pages in the Mac app with \`ft library open <path>\`
+2. When the user asks what Field Theory document they are looking at, run \`ft current --json\`; use the returned \`commands.readContent\` when the document body is needed
+3. When the user asks to edit the active Field Theory document, read it with \`ft current --content-only\`, write the complete updated markdown to a temp file, then run \`ft current update --file <temp-file>\`
+4. Check repo workflow state when branch/worktree/PR shape matters: \`ft state --json\`
+5. When the user says "that file" or "the recent file", inspect current repo recency with \`ft recent --json\`
+6. Search durable notes first when prior project knowledge matters: \`ft library search <query> --json\`
+7. Search bookmarks when reading history or saved X/Twitter posts matter: \`ft search <query> --json\`
+8. Inspect exact files or bookmarks with \`ft library show <path> --json\`, \`ft show <id> --json\`, or \`ft commands show <name> --json\`
+9. Create or update durable Library notes and portable commands only when the user asks for a saved artifact
+10. Open useful Library pages in the Mac app with \`ft library open <path>\`
 
 ## Possible Roadmap Workflow
 
@@ -94,6 +95,7 @@ ft paths --json                # Canonical bookmarks, library, commands paths
 ft status --json               # Bookmark/classification status plus paths
 ft current --json              # Active Field Theory document metadata without the full body
 ft current --content-only      # Active document body when the user/model actually needs it
+ft current update --file <tmp> # Replace the active source document with complete updated markdown
 ft state --json                # Repo workflow state: root, workers, PRs, cleanup, next step
 ft recent --json               # Current repo last-modified file and recent files for agent references
 
@@ -138,6 +140,7 @@ Combine filters: \`ft list --category tool --domain ai --limit 10\`
 - Ground roadmap work in actual bookmark-backed seeds
 - Lead roadmap reports with the plotted grid and concrete next actions, not just prose
 - For updates, use \`--expected-sha256\` from a prior \`show --json\` result or pass \`--force\` only when explicitly appropriate
+- For active-document edits, do not use raw \`activeDocument.path\` in shell commands; it may contain spaces. Use \`ft current --content-only\` and \`ft current update --file <temp-file>\`
 - In local app development, set \`FT_APP_DEV_DIR\` before \`ft library open\` so the CLI targets the Field Theory dev checkout instead of a generic Electron URL handler
 - Deletes move local files to Trash; the Mac app owns Library sync and remote tombstones
 `;
@@ -184,7 +187,7 @@ export interface SkillResult {
   action: 'installed' | 'updated' | 'up-to-date' | 'removed';
 }
 
-export async function installSkill(): Promise<SkillResult[]> {
+export async function installSkill(options: { force?: boolean } = {}): Promise<SkillResult[]> {
   const detected = detectAgents();
   const targets = detected.filter((a) => a.detected);
 
@@ -206,7 +209,7 @@ export async function installSkill(): Promise<SkillResult[]> {
     const content = agent.name === 'Codex' ? skillBody() : skillWithFrontmatter();
     const exists = fs.existsSync(agent.installPath);
 
-    if (exists) {
+    if (exists && !options.force) {
       const existing = fs.readFileSync(agent.installPath, 'utf-8');
       if (existing === content) {
         results.push({ agent: agent.name, path: agent.installPath, action: 'up-to-date' });
