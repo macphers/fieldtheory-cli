@@ -388,6 +388,41 @@ test('ft current keeps document content opt-in for model-facing JSON', async () 
   }
 });
 
+test('ft current prints shell-safe commands for active documents with spaces', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-shell-cli-'));
+  const previousExitCode = process.exitCode;
+  try {
+    const sessionDir = path.join(tmpDir, 'session');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    fs.writeFileSync(contentPath, '- cameras installed at home\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: '/library/Sunday Jun 14th.md',
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    const output = await captureStdout(async () => {
+      await buildCli().parseAsync(['node', 'ft', 'current', '--manifest', manifestPath]);
+    });
+
+    assert.match(output, /readCurrentCommand: ft current --content-only/);
+    assert.match(output, /editCurrentCommand: ft current update --file <temp-file>/);
+    assert.match(output, /source: '\/library\/Sunday Jun 14th\.md'/);
+    assert.match(output, /readSourceCommand: cat '\/library\/Sunday Jun 14th\.md'/);
+    assert.doesNotMatch(output, /^source: \/library\/Sunday Jun 14th\.md$/m);
+  } finally {
+    process.exitCode = previousExitCode;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('ft current update edits the active Library document without passing its path', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-update-'));
   const previousLibraryDir = process.env.FT_LIBRARY_DIR;
