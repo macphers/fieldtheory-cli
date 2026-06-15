@@ -13,6 +13,7 @@ export interface DocumentVersion {
 export interface DocumentUpdateOptions {
   expectedSha256?: string;
   force?: boolean;
+  allowEmpty?: boolean;
 }
 
 export interface DocumentUpdateResult {
@@ -116,6 +117,9 @@ export async function createMarkdownFile(filePath: string, content: string): Pro
 export async function updateMarkdownFile(filePath: string, content: string, options: DocumentUpdateOptions): Promise<DocumentUpdateResult> {
   if (!await pathExists(filePath)) {
     throw new Error(`File not found: ${filePath}`);
+  }
+  if (content.length === 0 && !options.allowEmpty) {
+    throw new Error('Refusing to overwrite with empty content. Pipe the complete document content to stdin, or pass --allow-empty to intentionally clear it.');
   }
   const current = readDocumentVersion(filePath);
   if (options.expectedSha256 && current.sha256 !== options.expectedSha256) {

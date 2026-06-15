@@ -33,13 +33,14 @@ import { exportBookmarks } from './md-export.js';
 import { renderViz } from './bookmarks-viz.js';
 import { listBrowserIds } from './browsers.js';
 import { configureHttpProxyFromEnv } from './http-proxy.js';
-import { dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
+import { canonicalLibraryDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
 import { PromptCancelledError, promptText } from './prompt.js';
 import { skillWithFrontmatter, installSkill, uninstallSkill } from './skill.js';
 import { registerCompanionCommands } from './companion-cli.js';
 import { getPathReport } from './field-status.js';
 import { formatAgentContext, getAgentContext } from './agent-context.js';
-import { formatCurrentDocumentSummary, readCurrentDocumentContext, readCurrentDocumentSummary } from './current.js';
+import { currentDocumentJson, formatCurrentDocumentSummary, isEditableCurrentSourcePath, readCurrentDocumentContext, readCurrentDocumentSummary } from './current.js';
+import { isPathInside, readContentInput, updateMarkdownFile } from './document-ops.js';
 import { updateLibraryDocument } from './library.js';
 import { formatWorkflowState, getWorkflowState } from './workflow-state.js';
 import {
@@ -312,6 +313,18 @@ function warnIfEmpty(totalBookmarks: number): void {
 
 function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
+}
+
+export function shouldInferStdinFromStats(stats: Pick<fs.Stats, 'isFIFO' | 'isFile'>): boolean {
+  return stats.isFIFO() || stats.isFile();
+}
+
+function hasPipedStdin(): boolean {
+  try {
+    return shouldInferStdinFromStats(fs.fstatSync(0));
+  } catch {
+    return false;
+  }
 }
 
 function formatMarkdownLink(label: string, href: string): string {
@@ -1935,18 +1948,20 @@ export function buildCli() {
     .description('Show the active Field Theory document attached to the Mac app terminal')
     .option('--manifest <path>', 'Read a specific context manifest')
     .option('--content-only', 'Print only the active document markdown/content')
-    .option('--include-content', 'Include active document content in --json output')
+    .option('--include-content', 'Deprecated: active document content is included in --json output by default')
+    .option('--summary', 'Omit active document content from --json output')
+    .option('--debug-paths', 'Include raw manifest/source/cache paths in --json output')
     .option('--json', 'JSON output')
     .action(safe(async (options) => {
       if (options.contentOnly) {
         process.stdout.write(readCurrentDocumentContext(options.manifest).content);
         return;
       }
-      const context = options.includeContent
+      const context = options.json && !options.summary
         ? readCurrentDocumentContext(options.manifest)
         : readCurrentDocumentSummary(options.manifest);
       if (options.json) {
-        printJson(context);
+        printJson(options.debugPaths ? context : currentDocumentJson(context));
         return;
       }
       process.stdout.write(formatCurrentDocumentSummary(context));
@@ -1960,20 +1975,32 @@ export function buildCli() {
     .option('--file <path>', 'Read markdown content from a file')
     .option('--expected-sha256 <hash>', 'Only update if the current source file hash matches')
     .option('--force', 'Overwrite without checking an expected hash')
+    .option('--allow-empty', 'Allow intentionally clearing the current document')
     .option('--json', 'JSON output')
     .action(safe(async (options, command) => {
-      if (!options.stdin && !options.file) throw new Error('Pass --stdin or --file for update content.');
+      const stdin = Boolean(options.stdin || (!options.file && hasPipedStdin()));
+      if (!stdin && !options.file) throw new Error('Pipe complete Markdown to stdin or pass --stdin/--file for update content.');
+      if (options.stdin && options.file) throw new Error('Pass only one of --stdin or --file for update content.');
       const parentOptions = command.parent?.opts() ?? {};
       const manifest = options.manifest || parentOptions.manifest;
       const context = readCurrentDocumentContext(manifest);
       const targetPath = context.activeDocument.path;
       if (!targetPath) throw new Error('Active Field Theory context has no source path to update.');
-      const doc = await updateLibraryDocument(targetPath, {
-        stdin: Boolean(options.stdin),
-        file: options.file ? String(options.file) : undefined,
+      if (!isEditableCurrentSourcePath(targetPath)) {
+        throw new Error('Active Field Theory context source is not an editable Field Theory Markdown file.');
+      }
+      const updateOptions = {
         expectedSha256: options.expectedSha256 ? String(options.expectedSha256) : undefined,
-        force: Boolean(options.force || !options.expectedSha256),
-      });
+        force: Boolean(options.force),
+        allowEmpty: Boolean(options.allowEmpty),
+      };
+      const input = {
+        stdin,
+        file: options.file ? String(options.file) : undefined,
+      };
+      const doc = isPathInside(canonicalLibraryDir(), targetPath)
+        ? await updateLibraryDocument(targetPath, { ...input, ...updateOptions })
+        : await updateMarkdownFile(targetPath, await readContentInput(input), updateOptions);
       if (options.json || parentOptions.json) {
         printJson(doc);
         return;
@@ -3305,8 +3332,10 @@ export function buildCli() {
   skill
     .command('install')
     .description('Install skill for detected agents (Claude Code, Codex)')
-    .action(safe(async () => {
-      const results = await installSkill();
+    .option('--force', 'Overwrite existing skill files without prompting')
+    .option('-y, --yes', 'Alias for --force')
+    .action(safe(async (options: { force?: boolean; yes?: boolean }) => {
+      const results = await installSkill({ force: Boolean(options.force || options.yes) });
       if (results.length === 0) {
         console.log('  No agents detected. Use `ft skill show` to copy manually.');
         return;

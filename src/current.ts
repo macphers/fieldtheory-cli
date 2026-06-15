@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { legacyCodexContextSessionsDir, runtimeContextSessionStatePath, runtimeContextSessionsDir } from './paths.js';
+import { type DocumentVersion, isPathInside, readDocumentVersion } from './document-ops.js';
+import { canonicalLibraryDir, fieldTheoryDir, fieldTheoryRoot, legacyCodexContextSessionsDir, runtimeContextSessionStatePath, runtimeContextSessionsDir } from './paths.js';
 
 export interface CurrentDocumentSelection {
   textPath: string;
@@ -12,6 +13,14 @@ export interface CurrentDocumentRelatedPage {
   path: string | null;
   kind: string | null;
   contentPath: string | null;
+}
+
+export interface CurrentDocumentEditProtocol {
+  readCommand: string;
+  updateCommand: string;
+  expectedHashField: string;
+  instructions: string;
+  warning: string;
 }
 
 export interface CurrentDocumentSummary {
@@ -26,7 +35,9 @@ export interface CurrentDocumentSummary {
     contentPath: string;
     shellQuotedContentPath: string;
     lineMapping: unknown;
+    version: DocumentVersion | null;
   };
+  documentEdit: CurrentDocumentEditProtocol;
   selection: CurrentDocumentSelection | null;
   recent: CurrentDocumentRelatedPage[];
   includedPages: CurrentDocumentRelatedPage[];
@@ -34,6 +45,21 @@ export interface CurrentDocumentSummary {
 
 export interface CurrentDocumentContext extends CurrentDocumentSummary {
   content: string;
+}
+
+export interface CurrentDocumentAgentJson {
+  title: string | null;
+  kind: string | null;
+  contentMode: string | null;
+  sourcePath: string | null;
+  editable: boolean;
+  version: DocumentVersion | null;
+  updateCommand: string;
+  updatedAt: string | null;
+  selection: { preview: string | null } | null;
+  recent: Array<{ title: string | null; kind: string | null }>;
+  includedPages: Array<{ title: string | null; kind: string | null }>;
+  content?: string;
 }
 
 type ManifestRecord = Record<string, unknown>;
@@ -194,6 +220,56 @@ function readRelatedPages(value: unknown, sessionDir: string): CurrentDocumentRe
     .filter((item): item is CurrentDocumentRelatedPage => item !== null);
 }
 
+function currentDocumentEditProtocol(): CurrentDocumentEditProtocol {
+  return {
+    readCommand: 'ft current --json',
+    updateCommand: 'ft current update --stdin --expected-sha256 <sha>',
+    expectedHashField: 'version.sha256',
+    instructions: 'Edit the content field as normal Markdown, then pipe the complete edited Markdown to updateCommand on stdin. Never run updateCommand without stdin content.',
+    warning: 'Use sourcePath for identity/debugging only; write edits through updateCommand.',
+  };
+}
+
+function isMarkdownPath(filePath: string): boolean {
+  return /\.(md|markdown)$/i.test(path.basename(filePath));
+}
+
+export function isEditableCurrentSourcePath(sourcePath: string | null): boolean {
+  if (!sourcePath || !path.isAbsolute(sourcePath) || !isMarkdownPath(sourcePath)) {
+    return false;
+  }
+  const resolvedSourcePath = path.resolve(sourcePath);
+  const blockedRoots = [
+    path.resolve(runtimeContextSessionsDir()),
+    path.resolve(legacyCodexContextSessionsDir()),
+  ];
+  if (blockedRoots.some((root) => isPathInside(root, resolvedSourcePath))) {
+    return false;
+  }
+  const allowedRoots = Array.from(new Set([
+    path.resolve(canonicalLibraryDir()),
+    path.resolve(path.join(fieldTheoryDir(), 'librarian', 'artifacts')),
+    path.resolve(path.join(fieldTheoryRoot(), 'librarian', 'artifacts')),
+  ]));
+  if (!allowedRoots.some((root) => isPathInside(root, resolvedSourcePath))) {
+    return false;
+  }
+  try {
+    return fs.statSync(resolvedSourcePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function sourceDocumentVersion(sourcePath: string | null): DocumentVersion | null {
+  if (!isEditableCurrentSourcePath(sourcePath)) return null;
+  try {
+    return readDocumentVersion(path.resolve(sourcePath!));
+  } catch {
+    return null;
+  }
+}
+
 export function readCurrentDocumentSummary(manifestPath = findCurrentContextManifest()): CurrentDocumentSummary {
   if (!manifestPath) {
     throw new Error('No active Field Theory context found. Open a Field Theory document and attach a Codex terminal first.');
@@ -226,7 +302,9 @@ export function readCurrentDocumentSummary(manifestPath = findCurrentContextMani
       contentPath,
       shellQuotedContentPath: stringField(documentRecord.shellQuotedContentPath) ?? quoteForPosixShell(contentPath),
       lineMapping: documentRecord.lineMapping ?? null,
+      version: sourceDocumentVersion(sourcePath),
     },
+    documentEdit: currentDocumentEditProtocol(),
     selection: readSelection(manifest.selection, sessionDir),
     recent: readRelatedPages(manifest.recent, sessionDir),
     includedPages: readRelatedPages(manifest.includedPages, sessionDir),
@@ -235,27 +313,46 @@ export function readCurrentDocumentSummary(manifestPath = findCurrentContextMani
 
 export function readCurrentDocumentContext(manifestPath = findCurrentContextManifest()): CurrentDocumentContext {
   const summary = readCurrentDocumentSummary(manifestPath);
+  const sourcePath = summary.activeDocument.path;
+  const contentPath = isEditableCurrentSourcePath(sourcePath) ? path.resolve(sourcePath!) : summary.activeDocument.contentPath;
   return {
     ...summary,
-    content: fs.readFileSync(summary.activeDocument.contentPath, 'utf-8'),
+    content: fs.readFileSync(contentPath, 'utf-8'),
   };
 }
 
+export function currentDocumentJson(context: CurrentDocumentSummary | CurrentDocumentContext): CurrentDocumentAgentJson {
+  const output: CurrentDocumentAgentJson = {
+    title: context.activeDocument.title,
+    kind: context.activeDocument.kind,
+    contentMode: context.activeDocument.contentMode,
+    sourcePath: context.activeDocument.path,
+    editable: context.activeDocument.version !== null,
+    version: context.activeDocument.version,
+    updateCommand: context.documentEdit.updateCommand,
+    updatedAt: context.updatedAt,
+    selection: context.selection ? { preview: context.selection.preview } : null,
+    recent: context.recent.map((page) => ({ title: page.title, kind: page.kind })),
+    includedPages: context.includedPages.map((page) => ({ title: page.title, kind: page.kind })),
+  };
+  if ('content' in context) output.content = context.content;
+  return output;
+}
+
 export function formatCurrentDocumentContext(context: CurrentDocumentContext): string {
-  const quotedSource = context.activeDocument.shellQuotedPath ?? '(unknown)';
   const lines = [
     '# Field Theory Current Document',
     '',
     `title: ${context.activeDocument.title ?? '(untitled)'}`,
-    'readCurrentCommand: ft current --content-only',
-    'editCurrentCommand: ft current update --file <temp-file>',
-    `source: ${quotedSource}`,
-    `readSourceCommand: ${context.activeDocument.path ? `cat ${quotedSource}` : '(unknown)'}`,
+    `readCurrentCommand: ${context.documentEdit.readCommand}`,
+    `editCurrentCommand: ${context.documentEdit.updateCommand}`,
+    `editInstructions: ${context.documentEdit.instructions}`,
+    `editWarning: ${context.documentEdit.warning}`,
+    `source: ${context.activeDocument.path ?? '(unknown)'}`,
     `kind: ${context.activeDocument.kind ?? '(unknown)'}`,
     `contentMode: ${context.activeDocument.contentMode ?? '(unknown)'}`,
     `updatedAt: ${context.updatedAt ?? '(unknown)'}`,
     `manifest: ${context.manifestPath}`,
-    `content: ${context.activeDocument.shellQuotedContentPath}`,
     `lineMapping: ${context.activeDocument.lineMapping ? 'available' : '(none)'}`,
     '',
     '---',
@@ -267,18 +364,17 @@ export function formatCurrentDocumentContext(context: CurrentDocumentContext): s
 }
 
 export function formatCurrentDocumentSummary(context: CurrentDocumentSummary): string {
-  const quotedSource = context.activeDocument.shellQuotedPath ?? '(unknown)';
   return [
     `title: ${context.activeDocument.title ?? '(untitled)'}`,
-    'readCurrentCommand: ft current --content-only',
-    'editCurrentCommand: ft current update --file <temp-file>',
-    `source: ${quotedSource}`,
-    `readSourceCommand: ${context.activeDocument.path ? `cat ${quotedSource}` : '(unknown)'}`,
+    `readCurrentCommand: ${context.documentEdit.readCommand}`,
+    `editCurrentCommand: ${context.documentEdit.updateCommand}`,
+    `editInstructions: ${context.documentEdit.instructions}`,
+    `editWarning: ${context.documentEdit.warning}`,
+    `source: ${context.activeDocument.path ?? '(unknown)'}`,
     `kind: ${context.activeDocument.kind ?? '(unknown)'}`,
     `contentMode: ${context.activeDocument.contentMode ?? '(unknown)'}`,
     `updatedAt: ${context.updatedAt ?? '(unknown)'}`,
     `manifest: ${context.manifestPath}`,
-    `content: ${context.activeDocument.shellQuotedContentPath}`,
     `lineMapping: ${context.activeDocument.lineMapping ? 'available' : '(none)'}`,
     '',
   ].join('\n');

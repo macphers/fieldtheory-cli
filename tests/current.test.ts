@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  currentDocumentJson,
   findCurrentContextManifest,
   formatCurrentDocumentContext,
   formatCurrentDocumentSummary,
@@ -48,17 +49,138 @@ test('readCurrentDocumentContext reads newest Field Theory context manifest', ()
 
     const summary = readCurrentDocumentSummary(newerManifest);
     assert.equal(summary.activeDocument.title, 'Newer Page');
+    assert.equal(summary.documentEdit.readCommand, 'ft current --json');
+    assert.equal(summary.documentEdit.updateCommand, 'ft current update --stdin --expected-sha256 <sha>');
+    assert.equal(summary.documentEdit.expectedHashField, 'version.sha256');
+    assert.match(summary.documentEdit.warning, /write edits through updateCommand/);
     assert.equal('content' in summary, false);
+    const agentSummary = currentDocumentJson(summary);
+    assert.deepEqual(Object.keys(agentSummary).slice(0, 2), ['title', 'kind']);
+    assert.equal(agentSummary.sourcePath, '/library/Newer Page.md');
+    assert.equal(agentSummary.updateCommand, 'ft current update --stdin --expected-sha256 <sha>');
+    assert.equal('activeDocument' in agentSummary, false);
+    assert.equal('documentEdit' in agentSummary, false);
+    assert.equal('contentPath' in agentSummary, false);
+    assert.equal('manifestPath' in agentSummary, false);
+    assert.equal('content' in agentSummary, false);
 
     const context = readCurrentDocumentContext(newerManifest);
     assert.equal(context.activeDocument.title, 'Newer Page');
     assert.equal(context.content, '# Newer\n');
+    assert.equal(currentDocumentJson(context).content, '# Newer\n');
     assert.match(formatCurrentDocumentContext(context), /title: Newer Page/);
     assert.match(formatCurrentDocumentContext(context), /# Newer/);
     assert.match(formatCurrentDocumentSummary(context), /title: Newer Page/);
     assert.doesNotMatch(formatCurrentDocumentSummary(context), /# Newer/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('readCurrentDocumentContext prefers the active source file over stale rendered context', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-source-'));
+  const originalLibraryDir = process.env.FT_LIBRARY_DIR;
+  process.env.FT_LIBRARY_DIR = path.join(tmpDir, 'library');
+  try {
+    const sourcePath = path.join(process.env.FT_LIBRARY_DIR, 'scratchpad', 'Sunday Jun 14th.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, '- real source\n');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    fs.writeFileSync(contentPath, '- stale context\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      activeDocument: {
+        title: 'Sunday Jun 14th',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    const context = readCurrentDocumentContext(manifestPath);
+    assert.equal(context.content, '- real source\n');
+    assert.equal(context.activeDocument.version?.sha256.length, 64);
+  } finally {
+    if (originalLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = originalLibraryDir;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('readCurrentDocumentContext supports Field Theory markdown sources outside the Library root', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-librarian-source-'));
+  const originalHome = process.env.HOME;
+  const originalLibraryDir = process.env.FT_LIBRARY_DIR;
+  process.env.HOME = tmpDir;
+  process.env.FT_LIBRARY_DIR = path.join(tmpDir, '.fieldtheory', 'library');
+  try {
+    const sourcePath = path.join(tmpDir, '.fieldtheory', 'librarian', 'artifacts', 'artifact.md');
+    const sessionDir = path.join(tmpDir, 'session');
+    fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, '- real artifact source\n');
+    const contentPath = path.join(sessionDir, 'active.md');
+    const manifestPath = path.join(sessionDir, 'context.json');
+    fs.writeFileSync(contentPath, '- stale rendered context\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      activeDocument: {
+        title: 'Artifact',
+        path: sourcePath,
+        kind: 'artifact',
+        contentMode: 'rendered',
+        contentPath,
+      },
+    }));
+
+    const context = readCurrentDocumentContext(manifestPath);
+    assert.equal(context.content, '- real artifact source\n');
+    assert.equal(context.activeDocument.version?.sha256.length, 64);
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = originalLibraryDir;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('readCurrentDocumentContext treats context cache paths as rendered copies, not editable source files', () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-cache-source-'));
+  const originalHome = process.env.HOME;
+  const originalLibraryDir = process.env.FT_LIBRARY_DIR;
+  process.env.HOME = homeDir;
+  process.env.FT_LIBRARY_DIR = path.join(homeDir, '.fieldtheory', 'library');
+  try {
+    const sourcePath = path.join(homeDir, '.fieldtheory', '.codex-context', 'sessions', 'session', 'active.md');
+    const sessionDir = path.dirname(sourcePath);
+    const manifestPath = path.join(sessionDir, 'context.json');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(sourcePath, '- rendered cache only\n');
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      activeDocument: {
+        title: 'Cache Copy',
+        path: sourcePath,
+        kind: 'wiki',
+        contentMode: 'rendered',
+        contentPath: sourcePath,
+      },
+    }));
+
+    const context = readCurrentDocumentContext(manifestPath);
+    assert.equal(context.content, '- rendered cache only\n');
+    assert.equal(context.activeDocument.version, null);
+    const agentJson = currentDocumentJson(context);
+    assert.equal(agentJson.editable, false);
+    assert.equal(agentJson.version, null);
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalLibraryDir === undefined) delete process.env.FT_LIBRARY_DIR;
+    else process.env.FT_LIBRARY_DIR = originalLibraryDir;
+    fs.rmSync(homeDir, { recursive: true, force: true });
   }
 });
 
@@ -199,7 +321,7 @@ test('readCurrentDocumentSummary exposes active document line mapping', () => {
   }
 });
 
-test('formatCurrentDocumentSummary prints shell-safe current document commands', () => {
+test('formatCurrentDocumentSummary prints the single current-document edit protocol', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-current-shell-'));
   try {
     const sessionsDir = path.join(tmpDir, 'sessions');
@@ -210,11 +332,13 @@ test('formatCurrentDocumentSummary prints shell-safe current document commands',
     assert.equal(summary.activeDocument.shellQuotedPath, "'/library/Sunday Jun 14th.md'");
 
     const output = formatCurrentDocumentSummary(summary);
-    assert.match(output, /readCurrentCommand: ft current --content-only/);
-    assert.match(output, /editCurrentCommand: ft current update --file <temp-file>/);
-    assert.match(output, /source: '\/library\/Sunday Jun 14th\.md'/);
-    assert.match(output, /readSourceCommand: cat '\/library\/Sunday Jun 14th\.md'/);
-    assert.doesNotMatch(output, /^source: \/library\/Sunday Jun 14th\.md$/m);
+    assert.match(output, /readCurrentCommand: ft current --json/);
+    assert.match(output, /editCurrentCommand: ft current update --stdin --expected-sha256 <sha>/);
+    assert.match(output, /editInstructions: Edit the content field as normal Markdown/);
+    assert.match(output, /editWarning: Use sourcePath for identity\/debugging only; write edits through updateCommand\./);
+    assert.match(output, /source: \/library\/Sunday Jun 14th\.md/);
+    assert.doesNotMatch(output, /readSourceCommand/);
+    assert.doesNotMatch(output, /cat '\/library\/Sunday Jun 14th\.md'/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
