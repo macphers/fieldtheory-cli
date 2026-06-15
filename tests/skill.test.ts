@@ -62,6 +62,7 @@ describe('skill content', () => {
     assert.ok(content.includes('For multiline edits, pipe the content on stdin'));
     assert.ok(content.includes('Never run `ft current update --stdin` by itself'));
     assert.ok(content.includes('Do not use ad hoc `sed -i`'));
+    assert.ok(content.includes('the Codex `apply_patch` tool'));
     assert.ok(content.includes('sourcePath` as identity/debugging context'));
     assert.ok(!content.includes('ft current --content-only'));
     assert.ok(!content.includes('ft current update --file <temp-file>'));

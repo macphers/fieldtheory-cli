@@ -57,7 +57,7 @@ After a successful update, use the newly printed \`sha256\` as the expected hash
 
 Never run \`ft current update --stdin\` by itself. It must receive the full edited document content on stdin. For multiline edits, pipe the content on stdin; do not pass Markdown as command arguments.
 
-Do not use ad hoc \`sed -i\`, \`awk > file\`, direct filesystem writes, context-cache files, temp-file rewrites, or invented commands such as \`ft edit\` for Field Theory document edits.
+Do not use ad hoc \`sed -i\`, \`awk > file\`, \`cat\` against \`sourcePath\`, the Codex \`apply_patch\` tool, direct filesystem writes, context-cache files, temp-file rewrites, or invented commands such as \`ft edit\` for Field Theory document edits.
 
 ## Possible Roadmap Workflow
 
