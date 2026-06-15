@@ -126,6 +126,22 @@ test('current update infers stdin only from piped or redirected input', () => {
   assert.equal(shouldInferStdinFromStats(stats(false, false)), false);
 });
 
+test('ft current update rejects document content passed as arguments with recovery guidance', async () => {
+  const previousExitCode = process.exitCode;
+  try {
+    const stderr = await captureStderr(async () => {
+      await buildCli().parseAsync(['node', 'ft', 'current', 'update', '## Heading', 'body text']);
+    });
+
+    assert.match(stderr, /does not accept document content as command arguments/);
+    assert.match(stderr, /Pipe the complete edited Markdown to stdin/);
+    assert.match(stderr, /ft current update --stdin --expected-sha256 <version\.sha256>/);
+    assert.equal(process.exitCode, 1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
+});
+
 test('ft navigation aliases inspect Field Theory library markdown', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ft-nav-'));
   const origEnv = {
@@ -766,6 +782,9 @@ test('ft current update honors explicit expected hashes', async () => {
     });
 
     assert.match(stderr, /File changed on disk/);
+    assert.match(stderr, /To continue editing safely, run ft current --json/);
+    assert.match(stderr, /merge the requested change into the returned content/);
+    assert.match(stderr, /Use the sha256 printed after each successful update for the next edit/);
     assert.equal(process.exitCode, 1);
     assert.equal(fs.readFileSync(sourcePath, 'utf-8'), 'current source\n');
   } finally {

@@ -53,7 +53,9 @@ When the user asks you to edit the current Field Theory document, there is one s
 2. Edit the returned \`content\` as normal Markdown.
 3. Send the complete edited Markdown back on stdin: \`ft current update --stdin --expected-sha256 <version.sha256>\`
 
-Never run \`ft current update --stdin\` by itself. It must receive the full edited document content on stdin.
+After a successful update, use the newly printed \`sha256\` as the expected hash for the next edit to the same document. If the update says the file changed on disk, run \`ft current --json\` again, merge the user's requested change into the returned \`content\`, then retry once with the new \`version.sha256\`.
+
+Never run \`ft current update --stdin\` by itself. It must receive the full edited document content on stdin. For multiline edits, pipe the content on stdin; do not pass Markdown as command arguments.
 
 Do not use ad hoc \`sed -i\`, \`awk > file\`, direct filesystem writes, context-cache files, temp-file rewrites, or invented commands such as \`ft edit\` for Field Theory document edits.
 

@@ -1970,6 +1970,7 @@ export function buildCli() {
   currentCommand
     .command('update')
     .description('Update the active Field Theory Library document with stdin or file content')
+    .argument('[unexpected...]', 'Unexpected positional content; pipe Markdown on stdin instead')
     .option('--manifest <path>', 'Read a specific context manifest')
     .option('--stdin', 'Read markdown content from stdin')
     .option('--file <path>', 'Read markdown content from a file')
@@ -1977,7 +1978,10 @@ export function buildCli() {
     .option('--force', 'Overwrite without checking an expected hash')
     .option('--allow-empty', 'Allow intentionally clearing the current document')
     .option('--json', 'JSON output')
-    .action(safe(async (options, command) => {
+    .action(safe(async (unexpectedArgs: string[], options, command) => {
+      if (unexpectedArgs.length > 0) {
+        throw new Error('ft current update does not accept document content as command arguments. Pipe the complete edited Markdown to stdin, then retry with ft current update --stdin --expected-sha256 <version.sha256>.');
+      }
       const stdin = Boolean(options.stdin || (!options.file && hasPipedStdin()));
       if (!stdin && !options.file) throw new Error('Pipe complete Markdown to stdin or pass --stdin/--file for update content.');
       if (options.stdin && options.file) throw new Error('Pass only one of --stdin or --file for update content.');

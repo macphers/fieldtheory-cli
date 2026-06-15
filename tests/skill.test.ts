@@ -57,6 +57,9 @@ describe('skill content', () => {
     assert.ok(content.includes('there is one supported path'));
     assert.ok(content.includes('Edit the returned `content` as normal Markdown'));
     assert.ok(content.includes('Send the complete edited Markdown back on stdin'));
+    assert.ok(content.includes('After a successful update, use the newly printed `sha256`'));
+    assert.ok(content.includes('run `ft current --json` again, merge the user'));
+    assert.ok(content.includes('For multiline edits, pipe the content on stdin'));
     assert.ok(content.includes('Never run `ft current update --stdin` by itself'));
     assert.ok(content.includes('Do not use ad hoc `sed -i`'));
     assert.ok(content.includes('sourcePath` as identity/debugging context'));
