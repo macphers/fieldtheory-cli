@@ -407,6 +407,18 @@ test('ft current includes document content in model-facing JSON by default', asy
         kind: 'wiki',
         contentMode: 'rendered',
         contentPath,
+        lineMapping: {
+          activeLineKind: 'renderedVisual',
+          contentMode: 'rendered',
+          visibleRowsOnly: true,
+          lines: [{
+            visibleLine: 27,
+            sourceLine: 22,
+            rowInSourceLine: 1,
+            rowsInSourceLine: 2,
+            text: 'visible row text',
+          }],
+        },
       },
     }));
 
@@ -427,6 +439,11 @@ test('ft current includes document content in model-facing JSON by default', asy
     assert.equal(summary.contentPath, undefined);
     assert.equal(summary.shellQuotedPath, undefined);
     assert.equal(summary.lineMapping, undefined);
+    assert.equal(summary.lineNumbers.activeSurface, 'rendered');
+    assert.equal(summary.lineNumbers.activeLineKind, 'renderedVisual');
+    assert.equal(summary.lineNumbers.lines[0].visibleLine, 27);
+    assert.equal(summary.lineNumbers.lines[0].sourceLine, 22);
+    assert.match(summary.lineNumbers.instructions, /Do not derive visible line numbers/);
     assert.equal(summary.manifestPath, undefined);
 
     const debugOutput = await captureStdout(async () => {

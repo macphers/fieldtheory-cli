@@ -57,6 +57,9 @@ test('readCurrentDocumentContext reads newest Field Theory context manifest', ()
     const agentSummary = currentDocumentJson(summary);
     assert.deepEqual(Object.keys(agentSummary).slice(0, 2), ['title', 'kind']);
     assert.equal(agentSummary.sourcePath, '/library/Newer Page.md');
+    assert.equal(agentSummary.lineNumbers.activeSurface, 'rendered');
+    assert.equal(agentSummary.lineNumbers.activeLineKind, null);
+    assert.match(agentSummary.lineNumbers.instructions, /no line map was attached/i);
     assert.equal(agentSummary.updateCommand, 'ft current update --stdin --expected-sha256 <sha>');
     assert.equal('activeDocument' in agentSummary, false);
     assert.equal('documentEdit' in agentSummary, false);
@@ -316,6 +319,12 @@ test('readCurrentDocumentSummary exposes active document line mapping', () => {
     const summary = readCurrentDocumentSummary(manifestPath);
     assert.deepEqual(summary.activeDocument.lineMapping, lineMapping);
     assert.match(formatCurrentDocumentSummary(summary), /lineMapping: available/);
+    const agentJson = currentDocumentJson(summary);
+    assert.equal(agentJson.lineNumbers.activeSurface, 'rendered');
+    assert.equal(agentJson.lineNumbers.activeLineKind, 'renderedVisual');
+    assert.equal(agentJson.lineNumbers.visibleRowsOnly, true);
+    assert.match(agentJson.lineNumbers.instructions, /visible or on-screen line questions/);
+    assert.deepEqual(agentJson.lineNumbers.lines, lineMapping.lines);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

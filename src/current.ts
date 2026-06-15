@@ -23,6 +23,29 @@ export interface CurrentDocumentEditProtocol {
   warning: string;
 }
 
+export interface CurrentDocumentLineNumberEntry {
+  visibleLine: number;
+  sourceLine: number;
+  rowInSourceLine?: number;
+  rowsInSourceLine?: number;
+  text: string;
+}
+
+export interface CurrentDocumentLineMapping {
+  activeLineKind: string | null;
+  contentMode: string | null;
+  visibleRowsOnly: boolean;
+  lines: CurrentDocumentLineNumberEntry[];
+}
+
+export interface CurrentDocumentLineNumbers {
+  activeSurface: string | null;
+  activeLineKind: string | null;
+  visibleRowsOnly: boolean;
+  instructions: string;
+  lines: CurrentDocumentLineNumberEntry[];
+}
+
 export interface CurrentDocumentSummary {
   manifestPath: string;
   updatedAt: string | null;
@@ -34,7 +57,7 @@ export interface CurrentDocumentSummary {
     contentMode: string | null;
     contentPath: string;
     shellQuotedContentPath: string;
-    lineMapping: unknown;
+    lineMapping: CurrentDocumentLineMapping | null;
     version: DocumentVersion | null;
   };
   documentEdit: CurrentDocumentEditProtocol;
@@ -51,6 +74,7 @@ export interface CurrentDocumentAgentJson {
   title: string | null;
   kind: string | null;
   contentMode: string | null;
+  lineNumbers: CurrentDocumentLineNumbers;
   sourcePath: string | null;
   editable: boolean;
   version: DocumentVersion | null;
@@ -84,6 +108,10 @@ function stringField(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function positiveIntegerField(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+}
+
 function quoteForPosixShell(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -98,6 +126,42 @@ function statMtimeMs(filePath: string): number {
 
 function arrayField(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function readLineMappingEntry(value: unknown): CurrentDocumentLineNumberEntry | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as ManifestRecord;
+  const visibleLine = positiveIntegerField(record.visibleLine);
+  const sourceLine = positiveIntegerField(record.sourceLine);
+  if (visibleLine === null || sourceLine === null) return null;
+
+  const entry: CurrentDocumentLineNumberEntry = {
+    visibleLine,
+    sourceLine,
+    text: typeof record.text === 'string' ? record.text : '',
+  };
+  const rowInSourceLine = positiveIntegerField(record.rowInSourceLine);
+  const rowsInSourceLine = positiveIntegerField(record.rowsInSourceLine);
+  if (rowInSourceLine !== null) entry.rowInSourceLine = rowInSourceLine;
+  if (rowsInSourceLine !== null) entry.rowsInSourceLine = rowsInSourceLine;
+  return entry;
+}
+
+function readLineMapping(value: unknown): CurrentDocumentLineMapping | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as ManifestRecord;
+  const activeLineKind = stringField(record.activeLineKind);
+  const contentMode = stringField(record.contentMode);
+  const lines = arrayField(record.lines)
+    .map(readLineMappingEntry)
+    .filter((line): line is CurrentDocumentLineNumberEntry => line !== null);
+  if (!activeLineKind && !contentMode && lines.length === 0) return null;
+  return {
+    activeLineKind,
+    contentMode,
+    visibleRowsOnly: typeof record.visibleRowsOnly === 'boolean' ? record.visibleRowsOnly : false,
+    lines,
+  };
 }
 
 function timestampMs(value: unknown): number {
@@ -301,7 +365,7 @@ export function readCurrentDocumentSummary(manifestPath = findCurrentContextMani
       contentMode: stringField(documentRecord.contentMode),
       contentPath,
       shellQuotedContentPath: stringField(documentRecord.shellQuotedContentPath) ?? quoteForPosixShell(contentPath),
-      lineMapping: documentRecord.lineMapping ?? null,
+      lineMapping: readLineMapping(documentRecord.lineMapping),
       version: sourceDocumentVersion(sourcePath),
     },
     documentEdit: currentDocumentEditProtocol(),
@@ -321,11 +385,36 @@ export function readCurrentDocumentContext(manifestPath = findCurrentContextMani
   };
 }
 
+function lineNumberInstructions(lineMapping: CurrentDocumentLineMapping | null, contentMode: string | null): string {
+  if (lineMapping?.activeLineKind === 'renderedVisual') {
+    return 'The user is viewing rendered visual lines. For visible or on-screen line questions, use lineNumbers.lines[].visibleLine. Do not derive visible line numbers by splitting content on newlines; sourceLine maps each visible row back to Markdown.';
+  }
+  if (lineMapping?.activeLineKind === 'source') {
+    return 'The user is viewing Markdown source lines. Visible line numbers match sourceLine and the content field newline numbers.';
+  }
+  if (contentMode && contentMode !== 'markdown') {
+    return `The user is viewing ${contentMode}, but no line map was attached. Treat content newline numbers as Markdown source lines, and say when a visible line cannot be resolved.`;
+  }
+  return 'No line map was attached. Treat content newline numbers as Markdown source lines.';
+}
+
+function currentDocumentLineNumbers(activeDocument: CurrentDocumentSummary['activeDocument']): CurrentDocumentLineNumbers {
+  const lineMapping = activeDocument.lineMapping;
+  return {
+    activeSurface: lineMapping?.contentMode ?? activeDocument.contentMode,
+    activeLineKind: lineMapping?.activeLineKind ?? (activeDocument.contentMode === 'markdown' ? 'source' : null),
+    visibleRowsOnly: lineMapping?.visibleRowsOnly ?? false,
+    instructions: lineNumberInstructions(lineMapping, activeDocument.contentMode),
+    lines: lineMapping?.lines ?? [],
+  };
+}
+
 export function currentDocumentJson(context: CurrentDocumentSummary | CurrentDocumentContext): CurrentDocumentAgentJson {
   const output: CurrentDocumentAgentJson = {
     title: context.activeDocument.title,
     kind: context.activeDocument.kind,
     contentMode: context.activeDocument.contentMode,
+    lineNumbers: currentDocumentLineNumbers(context.activeDocument),
     sourcePath: context.activeDocument.path,
     editable: context.activeDocument.version !== null,
     version: context.activeDocument.version,

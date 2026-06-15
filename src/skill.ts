@@ -36,7 +36,7 @@ Field Theory has four main local surfaces:
 ## Search Workflow
 
 1. Check paths and status when setup matters: \`ft paths --json\`, \`ft status --json\`
-2. When the user asks what Field Theory document they are looking at, run \`ft current --json\`; the JSON includes the document body, source path, editability, and hash when available
+2. When the user asks what Field Theory document they are looking at, run \`ft current --json\`; the JSON includes the document body, source path, editability, hash, content mode, and line-number mapping when available
 3. Check repo workflow state when branch/worktree/PR shape matters: \`ft state --json\`
 4. When the user says "that file" or "the recent file", inspect current repo recency with \`ft recent --json\`
 5. Search durable notes first when prior project knowledge matters: \`ft library search <query> --json\`
@@ -58,6 +58,8 @@ After a successful update, use the newly printed \`sha256\` as the expected hash
 Never run \`ft current update --stdin\` by itself. It must receive the full edited document content on stdin. For multiline edits, pipe the content on stdin; do not pass Markdown as command arguments.
 
 Do not use ad hoc \`sed -i\`, \`awk > file\`, \`cat\` against \`sourcePath\`, the Codex \`apply_patch\` tool, direct filesystem writes, context-cache files, temp-file rewrites, or invented commands such as \`ft edit\` for Field Theory document edits.
+
+When the user asks about a line number in the current document, read \`lineNumbers\` from \`ft current --json\` before answering. If \`lineNumbers.activeLineKind\` is \`renderedVisual\`, the user is referring to visible rendered rows; answer from \`lineNumbers.lines[].visibleLine\` and use \`sourceLine\` only as the Markdown source mapping. Do not answer visible-line questions by splitting \`content\` on newlines unless \`lineNumbers.activeLineKind\` is \`source\` or no line map is available.
 
 ## Possible Roadmap Workflow
 
@@ -107,7 +109,7 @@ If the user says "debate", use the existing \`ft possible\` pipeline as generate
 \`\`\`bash
 ft paths --json                # Canonical bookmarks, library, commands paths
 ft status --json               # Bookmark/classification status plus paths
-ft current --json              # Read current Markdown plus sourcePath, editable, and version.sha256
+ft current --json              # Read current Markdown plus sourcePath, contentMode, lineNumbers, editable, and version.sha256
 ft current --summary --json    # Active Field Theory document metadata without the full body
 ft current update --stdin --expected-sha256 <sha>   # Replace the actual current source file with stdin
 ft state --json                # Repo workflow state: root, workers, PRs, cleanup, next step
