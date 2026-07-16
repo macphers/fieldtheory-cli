@@ -121,12 +121,17 @@ On first run, `ft sync` extracts your X session from your browser and downloads 
 | `ft library update <path> --stdin --expected-sha256 <hash>` | Replace a Library page with conflict protection |
 | `ft library delete <path>` | Move a Library page to Trash; the Mac app owns remote sync tombstones |
 | `ft library open <path>` | Open a Library page in the Field Theory Mac app |
+| `ft library share <path> --visibility unlisted --json` | Publish or refresh an unlisted Library reading and return its stable URL |
 | `ft commands list` | List portable commands under `~/.fieldtheory/commands` |
 | `ft commands new <name>` | Create a reusable portable command |
 | `ft commands validate [name]` | Check command shape and guardrails |
 | `ft install app` | Download and install the latest Field Theory Mac app from `afar1/field-releases` |
 
 `ft library open` targets the packaged Field Theory app by bundle id (`com.fieldtheory.app`) instead of trusting the system-wide `fieldtheory://` handler. That avoids accidentally opening a generic Electron development app when another checkout registered the same URL scheme.
+
+`ft library share` uses the signed-in Field Theory app's protected local helper. A first run creates a shared reading; later runs update the same slug and URL. It reports success only after the public page returns unlisted HTML with the Library page's title and its OG image returns `image/png`.
+
+Only `unlisted` visibility is currently accepted. The CLI sends that value to the helper for forward compatibility, and the share database/service must also default to unlisted because older app helpers may ignore the field.
 
 For local Field Theory app development, point the CLI at the dev checkout:
 

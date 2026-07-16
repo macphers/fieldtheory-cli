@@ -6,7 +6,7 @@ export type BrowserPanelTarget = Record<string, unknown> & {
   path?: unknown;
 };
 
-type BrowserHelperState = {
+export type BrowserHelperState = {
   host: string;
   port: number;
   token: string;
@@ -14,7 +14,7 @@ type BrowserHelperState = {
   panelUrl?: string;
 };
 
-function normalizeState(value: unknown): BrowserHelperState | null {
+export function normalizeBrowserHelperState(value: unknown): BrowserHelperState | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
   if (typeof record.host !== 'string' || record.host.trim() === '') return null;
@@ -29,6 +29,14 @@ function normalizeState(value: unknown): BrowserHelperState | null {
   };
 }
 
+export async function readBrowserHelperState(): Promise<BrowserHelperState | null> {
+  try {
+    return normalizeBrowserHelperState(await readJson<unknown>(browserHelperStatePath()));
+  } catch {
+    return null;
+  }
+}
+
 async function assertHelperAvailable(state: BrowserHelperState): Promise<void> {
   const healthUrl = `http://${state.host}:${state.port}/health?token=${encodeURIComponent(state.token)}`;
   const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1000) });
@@ -36,12 +44,7 @@ async function assertHelperAvailable(state: BrowserHelperState): Promise<void> {
 }
 
 export async function buildBrowserPanelUrl(target: BrowserPanelTarget): Promise<string> {
-  let state: BrowserHelperState | null = null;
-  try {
-    state = normalizeState(await readJson<unknown>(browserHelperStatePath()));
-  } catch {
-    state = null;
-  }
+  const state = await readBrowserHelperState();
   if (!state) {
     throw new Error('Field Theory browser helper is not available. Start Field Theory with FIELD_THEORY_BROWSER_HELPER=1, then run ft panel again.');
   }

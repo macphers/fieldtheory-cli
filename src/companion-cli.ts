@@ -20,6 +20,7 @@ import {
   showLibraryDocument,
   updateLibraryDocument,
 } from './library.js';
+import { shareLibraryDocument } from './library-share.js';
 import { appPanelNavigationDocument } from './navigation.js';
 
 type SafeAction = (fn: (...args: any[]) => Promise<void>) => (...args: any[]) => Promise<void>;
@@ -190,6 +191,23 @@ export function registerCompanionCommands(program: Command, safe: SafeAction): v
         return;
       }
       console.log(target.url ?? target.path);
+    }));
+
+  library
+    .command('share')
+    .description('Publish or refresh an unlisted Library reading')
+    .argument('<path>', 'Relative or absolute markdown path')
+    .option('--visibility <visibility>', 'Share visibility', 'unlisted')
+    .option('--json', 'JSON output')
+    .action(safe(async (targetPath: string, options) => {
+      const result = await shareLibraryDocument(targetPath, {
+        visibility: String(options.visibility),
+      });
+      if (options.json) {
+        printJson(result);
+        return;
+      }
+      console.log(result.url);
     }));
 
   const portableCommands = program
