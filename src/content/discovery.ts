@@ -37,7 +37,7 @@ export function discoverYouTubeContent(bookmarks: BookmarkRecord[]): DiscoveredC
       existing.sourceRefs.push({
         bookmarkId: bookmark.id,
         bookmarkUrl: bookmark.url,
-        discoveredAt: bookmark.firstSeenAt ?? bookmark.bookmarkedAt ?? bookmark.syncedAt,
+        discoveredAt: bookmark.bookmarkedAt ?? bookmark.syncedAt,
         sourceUrl,
       });
       items.set(source.canonicalId, existing);

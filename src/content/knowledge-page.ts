@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { BookmarkRecord } from '../types.js';
 import { ensureDir, writeJson } from '../fs.js';
 import { discoverYouTubeContent } from './discovery.js';
+import { normalizeYouTubeUrl } from './youtube.js';
 import type {
   KnowledgeClaim,
   KnowledgeClaimInput,
@@ -43,6 +44,12 @@ function requiredText(value: string, name: string): string {
   const normalized = value.trim().replace(/\s+/g, ' ');
   if (!normalized) throw new Error(`${name} must not be empty.`);
   return normalized;
+}
+
+function parseGeneratedAt(value: string): string {
+  const timestamp = new Date(value);
+  if (!Number.isFinite(timestamp.getTime())) throw new Error('Generated timestamp must be a valid date.');
+  return timestamp.toISOString();
 }
 
 export function normalizeTranscript(
@@ -136,26 +143,33 @@ function validateClaims(
   transcript: TranscriptArtifact,
   name: string,
 ): KnowledgeClaim[] {
+  const transcriptEndMs = transcript.segments.at(-1)?.endMs ?? 0;
   return claims.map((claim, claimIndex) => {
     if (claim.citations.length === 0) throw new Error(`${name} claim ${claimIndex} must include at least one citation.`);
     return {
       text: requiredText(claim.text, `${name} claim ${claimIndex}`),
       citations: claim.citations.map((citation, citationIndex) => {
-      if (!Number.isInteger(citation.startMs) || !Number.isInteger(citation.endMs) || citation.endMs <= citation.startMs) {
-        throw new Error(`${name} claim ${claimIndex} citation ${citationIndex} has an invalid time range.`);
-      }
-      const segmentIds = transcript.segments
-        .filter((segment) => segment.endMs > citation.startMs && segment.startMs < citation.endMs)
-        .map((segment) => segment.id);
-      if (segmentIds.length === 0) {
-        throw new Error(`${name} claim ${claimIndex} citation ${citationIndex} does not resolve to transcript segments.`);
-      }
-      return {
-        transcriptContentHash: transcript.contentHash,
-        startMs: citation.startMs,
-        endMs: citation.endMs,
-        segmentIds,
-      };
+        if (
+          !Number.isInteger(citation.startMs)
+          || !Number.isInteger(citation.endMs)
+          || citation.startMs < 0
+          || citation.endMs <= citation.startMs
+          || citation.endMs > transcriptEndMs
+        ) {
+          throw new Error(`${name} claim ${claimIndex} citation ${citationIndex} has an invalid time range.`);
+        }
+        const segmentIds = transcript.segments
+          .filter((segment) => segment.endMs > citation.startMs && segment.startMs < citation.endMs)
+          .map((segment) => segment.id);
+        if (segmentIds.length === 0) {
+          throw new Error(`${name} claim ${claimIndex} citation ${citationIndex} does not resolve to transcript segments.`);
+        }
+        return {
+          transcriptContentHash: transcript.contentHash,
+          startMs: citation.startMs,
+          endMs: citation.endMs,
+          segmentIds,
+        };
       }),
     };
   });
@@ -163,8 +177,9 @@ function validateClaims(
 
 export function buildKnowledgePageArtifact(input: KnowledgePageFixtureInput): KnowledgePageArtifact {
   const discovered = discoverYouTubeContent([input.bookmark]);
+  const selectedSource = input.sourceUrl ? normalizeYouTubeUrl(input.sourceUrl) : null;
   const item = input.sourceUrl
-    ? discovered.find((candidate) => candidate.sourceRefs.some((ref) => ref.sourceUrl === input.sourceUrl))
+    ? discovered.find((candidate) => candidate.canonicalId === selectedSource?.canonicalId)
     : discovered[0];
   if (!item) throw new Error('Bookmark does not contain a supported YouTube URL.');
   if (!Number.isInteger(input.media.durationMs) || input.media.durationMs <= 0) {
@@ -179,7 +194,7 @@ export function buildKnowledgePageArtifact(input: KnowledgePageFixtureInput): Kn
     input.transcript.provenance,
     input.transcript.segments,
   );
-  const chapters = input.chapters ?? [];
+  const chapters = [...(input.chapters ?? [])];
   const usableCreatorChapters = creatorChaptersAreUsable(chapters, input.media.durationMs);
   const validGeneratedChapters = generatedChaptersAreValid(chapters, input.media.durationMs);
   if (chapters.some((chapter) => chapter.source === 'generated') && !validGeneratedChapters) {
@@ -190,10 +205,15 @@ export function buildKnowledgePageArtifact(input: KnowledgePageFixtureInput): Kn
     : validGeneratedChapters
       ? 'generated'
       : 'needs-generation';
+  const artifactChapters = chapterStatus === 'creator'
+    ? chapters.sort((a, b) => a.startMs - b.startMs)
+    : chapterStatus === 'generated'
+      ? chapters
+      : [];
 
   return {
     schemaVersion: 1,
-    generatedAt: new Date(input.generatedAt).toISOString(),
+    generatedAt: parseGeneratedAt(input.generatedAt),
     item: {
       ...item,
       title: requiredText(input.media.title, 'Media title'),
@@ -202,7 +222,7 @@ export function buildKnowledgePageArtifact(input: KnowledgePageFixtureInput): Kn
       ...(input.media.thumbnailUrl ? { thumbnailUrl: input.media.thumbnailUrl } : {}),
     },
     transcript,
-    chapters: usableCreatorChapters || chapterStatus === 'generated' ? chapters : [],
+    chapters: artifactChapters,
     chapterStatus,
     overview: validateClaims(input.synthesis.overview, transcript, 'Overview'),
     details: validateClaims(input.synthesis.details, transcript, 'Details'),
