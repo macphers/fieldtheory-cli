@@ -59,3 +59,32 @@ test('discovers links in bookmark and quoted-post fields and deduplicates by vid
   assert.equal(items[0].canonicalId, `youtube:${VIDEO_ID}`);
   assert.deepEqual(items[0].sourceRefs.map((ref) => ref.bookmarkId), ['one', 'two']);
 });
+
+test('discovers bookmark and quoted media surfaces with deterministic provenance ordering', () => {
+  const bookmarks: BookmarkRecord[] = [
+    {
+      id: 'later', tweetId: 'later', url: 'https://x.com/a/status/4', text: '',
+      media: ['https://youtu.be/ccccccccccc'],
+      mediaObjects: [{ expandedUrl: 'https://youtube.com/watch?v=aaaaaaaaaaa' }],
+      syncedAt: '2026-08-03T00:00:00.000Z', bookmarkedAt: '2026-08-02T00:00:00.000Z',
+      quotedTweet: {
+        id: 'quoted', text: '', url: 'https://x.com/b/status/5',
+        media: ['https://youtube.com/shorts/ddddddddddd'],
+        mediaObjects: [{ mediaUrl: 'https://youtube.com/embed/bbbbbbbbbbb' }],
+      },
+    },
+    {
+      id: 'earlier', tweetId: 'earlier', url: 'https://x.com/c/status/6', text: '',
+      links: ['https://youtube.com/watch?v=aaaaaaaaaaa'],
+      syncedAt: '2026-08-01T00:00:00.000Z',
+    },
+  ];
+
+  const items = discoverYouTubeContent(bookmarks);
+  assert.deepEqual(items.map((item) => item.videoId), ['aaaaaaaaaaa', 'bbbbbbbbbbb', 'ccccccccccc', 'ddddddddddd']);
+  assert.deepEqual(items[0].sourceRefs.map((ref) => ref.bookmarkId), ['earlier', 'later']);
+  assert.deepEqual(items[0].sourceRefs.map((ref) => ref.discoveredAt), [
+    '2026-08-01T00:00:00.000Z',
+    '2026-08-02T00:00:00.000Z',
+  ]);
+});

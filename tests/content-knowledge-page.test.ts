@@ -60,6 +60,11 @@ test('rejects citations that do not resolve to transcript evidence', () => {
   const pastEnd = input();
   pastEnd.synthesis.details[0].citations = [{ startMs: 170000, endMs: 190000 }];
   assert.throws(() => buildKnowledgePageArtifact(pastEnd), /invalid time range/);
+
+  const gap = input();
+  gap.transcript.segments[1].startMs = 70000;
+  gap.synthesis.details[0].citations = [{ startMs: 61000, endMs: 69000 }];
+  assert.throws(() => buildKnowledgePageArtifact(gap), /does not resolve/);
 });
 
 test('rejects malformed transcript timing and unsupported bookmarks', () => {
@@ -83,6 +88,65 @@ test('applies the deterministic creator-chapter quality policy', () => {
     { startMs: 0, endMs: 100000, label: 'Overlap one', source: 'creator' },
     { startMs: 0, endMs: 100000, label: 'Overlap two', source: 'creator' },
   ], 180000), false);
+  assert.equal(creatorChaptersAreUsable([
+    { startMs: 0, endMs: 1_800_001, label: 'Too long', source: 'creator' },
+  ], 1_800_001), false);
+  assert.equal(creatorChaptersAreUsable([
+    { startMs: 0, endMs: 1000, label: '', source: 'creator' },
+  ], 1000), false);
+});
+
+test('accepts valid generated chapters and flags missing creator coverage for generation', () => {
+  const generated = input();
+  generated.chapters = generated.chapters!.map((chapter) => ({ ...chapter, source: 'generated' }));
+  const generatedArtifact = buildKnowledgePageArtifact(generated);
+  assert.equal(generatedArtifact.chapterStatus, 'generated');
+  assert.deepEqual(generatedArtifact.chapters, generated.chapters);
+
+  const missing = input();
+  missing.chapters = [];
+  const missingArtifact = buildKnowledgePageArtifact(missing);
+  assert.equal(missingArtifact.chapterStatus, 'needs-generation');
+  assert.deepEqual(missingArtifact.chapters, []);
+
+  const unusable = input();
+  unusable.chapters = [{ startMs: 0, endMs: 1000, label: 'Sparse', source: 'creator' }];
+  assert.equal(buildKnowledgePageArtifact(unusable).chapterStatus, 'needs-generation');
+});
+
+test('rejects malformed generated chapters', () => {
+  const cases = [
+    [{ startMs: 0, endMs: 100000, label: 'One', source: 'generated' as const }, { startMs: 90000, endMs: 180000, label: 'Two', source: 'generated' as const }],
+    [{ startMs: 0.5, endMs: 1000, label: 'Fractional', source: 'generated' as const }],
+    [{ startMs: 0, endMs: 180001, label: 'Unbounded', source: 'generated' as const }],
+    [{ startMs: 0, endMs: 1000, label: ' ', source: 'generated' as const }],
+  ];
+  for (const chapters of cases) {
+    const value = input();
+    value.chapters = chapters;
+    assert.throws(() => buildKnowledgePageArtifact(value), /ordered, non-overlapping, bounded, and non-empty/);
+  }
+});
+
+test('rejects malformed transcript, media, synthesis, and source inputs', () => {
+  const cases: Array<[string, (value: KnowledgePageFixtureInput) => void, RegExp]> = [
+    ['empty transcript', (value) => { value.transcript.segments = []; }, /at least one segment/],
+    ['fractional timestamp', (value) => { value.transcript.segments[0].startMs = 0.5; }, /integer milliseconds/],
+    ['out-of-order transcript', (value) => { value.transcript.segments[2].startMs = 50000; }, /starts before/],
+    ['blank transcript text', (value) => { value.transcript.segments[0].text = ' '; }, /must not be empty/],
+    ['blank language', (value) => { value.transcript.language = ' '; }, /language must not be empty/],
+    ['blank title', (value) => { value.media.title = ' '; }, /title must not be empty/],
+    ['blank creator', (value) => { value.media.creator = ' '; }, /creator must not be empty/],
+    ['invalid duration', (value) => { value.media.durationMs = 0; }, /positive integer/],
+    ['short overview', (value) => { value.synthesis.overview = value.synthesis.overview.slice(0, 2); }, /3 to 5 claims/],
+    ['long overview', (value) => { value.synthesis.overview = Array(6).fill(value.synthesis.overview[0]); }, /3 to 5 claims/],
+    ['malformed requested source', (value) => { value.sourceUrl = 'not-a-url'; }, /supported YouTube URL/],
+  ];
+  for (const [name, mutate, expected] of cases) {
+    const value = input();
+    mutate(value);
+    assert.throws(() => buildKnowledgePageArtifact(value), expected, name);
+  }
 });
 
 test('stores accepted creator chapters in chronological order', () => {
