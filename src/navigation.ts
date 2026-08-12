@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildFieldTheoryOpenTarget, inferOpenKind, openFieldTheoryTarget } from './app-open.js';
+import { buildFieldTheoryOpenTarget, buildFieldTheoryPanelOpenTarget, inferOpenKind, openFieldTheoryTarget } from './app-open.js';
+import { buildBrowserPanelUrl } from './browser-helper-state.js';
 import {
   createCommandDocument,
   listCommandDocuments,
@@ -364,6 +365,50 @@ export async function openNavigationDocument(target: string, options: Navigation
     path: openTarget.path,
     url: openTarget.url,
     launched: Boolean(launch?.launched),
+  };
+}
+
+export async function panelNavigationDocument(target: string, options: NavigationOpenOptions = {}): Promise<NavigationOpenResult> {
+  if (!target && !options.query) {
+    const url = await buildBrowserPanelUrl({ kind: 'library' });
+    return {
+      path: 'library',
+      url,
+      launched: false,
+    };
+  }
+
+  const entry = options.query ? findNavigationEntries(options.query, 1)[0] : resolveNavigationEntry(target);
+  if (!entry) throw new Error(`No Field Theory document found for query: ${options.query}`);
+  const kind = inferOpenKind(entry.path) ?? 'library';
+  const openTarget = buildFieldTheoryPanelOpenTarget(entry.path, kind);
+  const url = kind === 'command'
+    ? await buildBrowserPanelUrl({ kind: 'command', path: openTarget.path })
+    : await buildBrowserPanelUrl({ kind: 'wiki', path: path.relative(canonicalLibraryDir(), openTarget.path).split(path.sep).join('/') });
+  return {
+    path: openTarget.path,
+    url,
+    launched: false,
+  };
+}
+
+export async function appPanelNavigationDocument(target: string, options: NavigationOpenOptions = {}): Promise<NavigationOpenResult> {
+  if (!target && !options.query) {
+    return {
+      path: 'library',
+      url: 'fieldtheory://browser-library/open?kind=library',
+      launched: false,
+    };
+  }
+
+  const entry = options.query ? findNavigationEntries(options.query, 1)[0] : resolveNavigationEntry(target);
+  if (!entry) throw new Error(`No Field Theory document found for query: ${options.query}`);
+  const kind = inferOpenKind(entry.path) ?? 'library';
+  const openTarget = buildFieldTheoryPanelOpenTarget(entry.path, kind);
+  return {
+    path: openTarget.path,
+    url: openTarget.url,
+    launched: false,
   };
 }
 

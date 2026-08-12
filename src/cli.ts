@@ -33,13 +33,15 @@ import { exportBookmarks } from './md-export.js';
 import { renderViz } from './bookmarks-viz.js';
 import { listBrowserIds } from './browsers.js';
 import { configureHttpProxyFromEnv } from './http-proxy.js';
-import { dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
+import { canonicalLibraryDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
 import { PromptCancelledError, promptText } from './prompt.js';
 import { skillWithFrontmatter, installSkill, uninstallSkill } from './skill.js';
 import { registerCompanionCommands } from './companion-cli.js';
 import { getPathReport } from './field-status.js';
 import { formatAgentContext, getAgentContext } from './agent-context.js';
-import { formatCurrentDocumentSummary, readCurrentDocumentContext, readCurrentDocumentSummary } from './current.js';
+import { currentDocumentJson, formatCurrentDocumentSummary, isEditableCurrentSourcePath, readCurrentDocumentContext, readCurrentDocumentSummary } from './current.js';
+import { isPathInside, readContentInput, updateMarkdownFile } from './document-ops.js';
+import { updateLibraryDocument } from './library.js';
 import { formatWorkflowState, getWorkflowState } from './workflow-state.js';
 import {
   appendNavigationDocument,
@@ -67,6 +69,7 @@ import {
   listNavigationTagged,
   listNavigationTags,
   openNavigationDocument,
+  panelNavigationDocument,
   readNavigationDocument,
   renameNavigationDocument,
   type NavigationPlace,
@@ -312,6 +315,24 @@ function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+export function shouldInferStdinFromStats(stats: Pick<fs.Stats, 'isFIFO' | 'isFile'>): boolean {
+  return stats.isFIFO() || stats.isFile();
+}
+
+function hasPipedStdin(): boolean {
+  try {
+    return shouldInferStdinFromStats(fs.fstatSync(0));
+  } catch {
+    return false;
+  }
+}
+
+function formatMarkdownLink(label: string, href: string): string {
+  const safeLabel = label.replace(/]/g, '\\]');
+  const safeHref = href.replace(/\)/g, '%29');
+  return `[${safeLabel}](${safeHref})`;
+}
+
 function parseNavigationPlace(value: string): NavigationPlace {
   const place = value.toLowerCase();
   if (listNavigationPlaces().some((candidate) => candidate.name === place)) {
@@ -485,6 +506,7 @@ function isInternalWorkerCommand(command: Command): boolean {
 function shouldSkipCommandChrome(command: Command): boolean {
   if (isInternalWorkerCommand(command)) return true;
   if (command.opts().json) return true;
+  if (command.parent?.name() === 'current') return true;
   if ([
     'path', 'paths', 'current', 'recent', 'state', 'ls', 'tree', 'find', 'grep', 'cat',
     'head', 'meta', 'pwd', 'context', 'open', 'tab', 'reveal', 'link', 'links',
@@ -1700,6 +1722,51 @@ export function buildCli() {
     }));
 
   program
+    .command('panel')
+    .description('Print a Field Theory panel link for a Library or command document')
+    .argument('[file]', 'Relative or absolute markdown path, title, or filename')
+    .option('--query <query>', 'Find one matching document and link it')
+    .option('--open', 'Open the panel link in the Field Theory app')
+    .option('--url', 'Print the raw URL instead of a Markdown hyperlink')
+    .option('--json', 'JSON output')
+    .action(safe(async (targetPath: string | undefined, options) => {
+      const result = await panelNavigationDocument(targetPath ?? '', {
+        launch: options.open === true,
+        query: options.query ? String(options.query) : undefined,
+      });
+      if (options.json) {
+        printJson(result);
+        return;
+      }
+      const href = result.url ?? result.path;
+      console.log(options.url ? href : formatMarkdownLink('Open in Field Theory panel', href));
+    }));
+
+  const codexCommand = program
+    .command('codex')
+    .description('Codex-facing Field Theory helpers');
+
+  codexCommand
+    .command('panel')
+    .description('Print a Field Theory panel link for Codex')
+    .argument('[file]', 'Relative or absolute markdown path, title, or filename')
+    .option('--query <query>', 'Find one matching document and link it')
+    .option('--url', 'Print the raw URL instead of a Markdown hyperlink')
+    .option('--json', 'JSON output')
+    .action(safe(async (targetPath: string | undefined, options) => {
+      const result = await panelNavigationDocument(targetPath ?? '', {
+        launch: false,
+        query: options.query ? String(options.query) : undefined,
+      });
+      if (options.json) {
+        printJson(result);
+        return;
+      }
+      const href = result.url ?? result.path;
+      console.log(options.url ? href : formatMarkdownLink('Open in Field Theory panel', href));
+    }));
+
+  program
     .command('tab')
     .description('Open a Field Theory Library document as a tab when the app supports it')
     .argument('<file>', 'Relative or absolute markdown path, title, or filename')
@@ -1876,26 +1943,74 @@ export function buildCli() {
       else process.stdout.write(formatNavigationState(state));
     }));
 
-  program
+  const currentCommand = program
     .command('current')
     .description('Show the active Field Theory document attached to the Mac app terminal')
     .option('--manifest <path>', 'Read a specific context manifest')
     .option('--content-only', 'Print only the active document markdown/content')
-    .option('--include-content', 'Include active document content in --json output')
+    .option('--include-content', 'Deprecated: active document content is included in --json output by default')
+    .option('--summary', 'Omit active document content from --json output')
+    .option('--debug-paths', 'Include raw manifest/source/cache paths in --json output')
     .option('--json', 'JSON output')
     .action(safe(async (options) => {
       if (options.contentOnly) {
         process.stdout.write(readCurrentDocumentContext(options.manifest).content);
         return;
       }
-      const context = options.includeContent
+      const context = options.json && !options.summary
         ? readCurrentDocumentContext(options.manifest)
         : readCurrentDocumentSummary(options.manifest);
       if (options.json) {
-        printJson(context);
+        printJson(options.debugPaths ? context : currentDocumentJson(context));
         return;
       }
       process.stdout.write(formatCurrentDocumentSummary(context));
+    }));
+
+  currentCommand
+    .command('update')
+    .description('Update the active Field Theory Library document with stdin or file content')
+    .argument('[unexpected...]', 'Unexpected positional content; pipe Markdown on stdin instead')
+    .option('--manifest <path>', 'Read a specific context manifest')
+    .option('--stdin', 'Read markdown content from stdin')
+    .option('--file <path>', 'Read markdown content from a file')
+    .option('--expected-sha256 <hash>', 'Only update if the current source file hash matches')
+    .option('--force', 'Overwrite without checking an expected hash')
+    .option('--allow-empty', 'Allow intentionally clearing the current document')
+    .option('--json', 'JSON output')
+    .action(safe(async (unexpectedArgs: string[], options, command) => {
+      if (unexpectedArgs.length > 0) {
+        throw new Error('ft current update does not accept document content as command arguments. Pipe the complete edited Markdown to stdin, then retry with ft current update --stdin --expected-sha256 <version.sha256>.');
+      }
+      const stdin = Boolean(options.stdin || (!options.file && hasPipedStdin()));
+      if (!stdin && !options.file) throw new Error('Pipe complete Markdown to stdin or pass --stdin/--file for update content.');
+      if (options.stdin && options.file) throw new Error('Pass only one of --stdin or --file for update content.');
+      const parentOptions = command.parent?.opts() ?? {};
+      const manifest = options.manifest || parentOptions.manifest;
+      const context = readCurrentDocumentContext(manifest);
+      const targetPath = context.activeDocument.path;
+      if (!targetPath) throw new Error('Active Field Theory context has no source path to update.');
+      if (!isEditableCurrentSourcePath(targetPath)) {
+        throw new Error('Active Field Theory context source is not an editable Field Theory Markdown file.');
+      }
+      const updateOptions = {
+        expectedSha256: options.expectedSha256 ? String(options.expectedSha256) : undefined,
+        force: Boolean(options.force),
+        allowEmpty: Boolean(options.allowEmpty),
+      };
+      const input = {
+        stdin,
+        file: options.file ? String(options.file) : undefined,
+      };
+      const doc = isPathInside(canonicalLibraryDir(), targetPath)
+        ? await updateLibraryDocument(targetPath, { ...input, ...updateOptions })
+        : await updateMarkdownFile(targetPath, await readContentInput(input), updateOptions);
+      if (options.json || parentOptions.json) {
+        printJson(doc);
+        return;
+      }
+      console.log(`Updated: ${doc.path}`);
+      console.log(`sha256: ${doc.version.sha256}`);
     }));
 
   program
@@ -3221,8 +3336,10 @@ export function buildCli() {
   skill
     .command('install')
     .description('Install skill for detected agents (Claude Code, Codex)')
-    .action(safe(async () => {
-      const results = await installSkill();
+    .option('--force', 'Overwrite existing skill files without prompting')
+    .option('-y, --yes', 'Alias for --force')
+    .action(safe(async (options: { force?: boolean; yes?: boolean }) => {
+      const results = await installSkill({ force: Boolean(options.force || options.yes) });
       if (results.length === 0) {
         console.log('  No agents detected. Use `ft skill show` to copy manually.');
         return;

@@ -42,6 +42,7 @@ export interface LibraryWriteInput {
 export interface LibraryUpdateInput extends LibraryWriteInput {
   expectedSha256?: string;
   force?: boolean;
+  allowEmpty?: boolean;
 }
 
 export interface LibraryListOptions {
@@ -199,6 +200,7 @@ export async function updateLibraryDocument(target: string, input: LibraryUpdate
   await updateMarkdownFile(filePath, content, {
     expectedSha256: input.expectedSha256,
     force: input.force,
+    allowEmpty: input.allowEmpty,
   });
   return showLibraryDocument(filePath);
 }

@@ -15,6 +15,10 @@ export function fieldTheoryDir(): string {
   return path.join(os.homedir(), '.fieldtheory');
 }
 
+export function browserHelperStatePath(): string {
+  return process.env.FT_BROWSER_HELPER_STATE_PATH ?? path.join(fieldTheoryDir(), 'browser-helper.json');
+}
+
 export function legacyDataDir(): string {
   return path.join(os.homedir(), '.ft-bookmarks');
 }
@@ -31,8 +35,20 @@ export function canonicalCommandsDir(): string {
   return process.env.FT_COMMANDS_DIR ?? path.join(canonicalLibraryDir(), 'Commands');
 }
 
-export function codexContextSessionsDir(): string {
+export function runtimeContextSessionsDir(): string {
+  return path.join(fieldTheoryDir(), '.codex-context', 'sessions');
+}
+
+export function runtimeContextSessionStatePath(): string {
+  return path.join(fieldTheoryDir(), '.codex-context', 'session-state.json');
+}
+
+export function legacyCodexContextSessionsDir(): string {
   return path.join(canonicalLibraryDir(), 'Codex Context', 'sessions');
+}
+
+export function codexContextSessionsDir(): string {
+  return legacyCodexContextSessionsDir();
 }
 
 export function libraryDir(): string {
