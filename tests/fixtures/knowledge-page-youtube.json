@@ -1,0 +1,48 @@
+{
+  "bookmark": {
+    "id": "bookmark-001",
+    "tweetId": "tweet-001",
+    "url": "https://x.com/example/status/1001",
+    "text": "A useful conversation https://youtu.be/dQw4w9WgXcQ?t=42",
+    "links": [
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ&utm_source=x"
+    ],
+    "syncedAt": "2026-08-10T18:00:00.000Z",
+    "firstSeenAt": "2026-08-10T17:55:00.000Z"
+  },
+  "media": {
+    "title": "A Redacted Test Conversation",
+    "creator": "Example Channel",
+    "durationMs": 180000,
+    "thumbnailUrl": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+  },
+  "transcript": {
+    "language": "en",
+    "provenance": {
+      "provider": "fixture",
+      "toolVersion": "1.0.0",
+      "source": "creator-captions"
+    },
+    "segments": [
+      { "startMs": 0, "endMs": 60000, "text": "The opening establishes the central question and why it matters." },
+      { "startMs": 60000, "endMs": 120000, "text": "The middle explains the practical mechanism with a concrete example." },
+      { "startMs": 120000, "endMs": 180000, "text": "The ending summarizes the tradeoff and proposes a next step." }
+    ]
+  },
+  "chapters": [
+    { "startMs": 0, "endMs": 60000, "label": "The question", "source": "creator" },
+    { "startMs": 60000, "endMs": 120000, "label": "The mechanism", "source": "creator" },
+    { "startMs": 120000, "endMs": 180000, "label": "The next step", "source": "creator" }
+  ],
+  "synthesis": {
+    "overview": [
+      { "text": "The conversation begins with a focused central question.", "citations": [{ "startMs": 0, "endMs": 60000 }] },
+      { "text": "A concrete example explains the proposed mechanism.", "citations": [{ "startMs": 60000, "endMs": 120000 }] },
+      { "text": "The conclusion identifies a tradeoff and next step.", "citations": [{ "startMs": 120000, "endMs": 180000 }] }
+    ],
+    "details": [
+      { "text": "The practical mechanism appears in the middle section.", "citations": [{ "startMs": 60000, "endMs": 120000 }] }
+    ]
+  },
+  "generatedAt": "2026-08-12T19:00:00.000Z"
+}
