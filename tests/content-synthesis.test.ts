@@ -5,6 +5,7 @@ import { buildKnowledgePageArtifact, type KnowledgePageFixtureInput } from '../s
 import { partitionTranscript, SynthesisPipeline, type SynthesisModel } from '../src/content/synthesis/pipeline.js';
 import { normalizeTranscript } from '../src/content/knowledge-page.js';
 import { chapterEvidencePayload } from '../src/content/synthesis/chapters.js';
+import { EngineContentModel } from '../src/content/engine-model.js';
 
 const artifact = buildKnowledgePageArtifact(structuredClone(fixture) as KnowledgePageFixtureInput);
 
@@ -74,6 +75,23 @@ test('synthesis batches claim support checks without weakening citation validati
   assert.equal(result.overview.length, 3);
   assert.equal(batchCalls, 2);
   assert.equal(singleCalls, 0);
+});
+
+test('engine support batch falls back to individual verification when the model returns the wrong count', async () => {
+  const responses = [
+    '{"statuses":["supported"]}',
+    '{"status":"supported"}',
+    '{"status":"unsupported"}',
+  ];
+  const model = new EngineContentModel({ name: 'fixture', config: { bin: 'fixture', args: () => [] } });
+  model.generate = async () => responses.shift()!;
+  const claim = artifact.overview[0];
+  const excerpts = artifact.transcript.segments.slice(0, 2);
+  assert.deepEqual(
+    await model.checkSupportBatch([{ claim, excerpts }, { claim, excerpts }]),
+    ['supported', 'unsupported'],
+  );
+  assert.equal(responses.length, 0);
 });
 
 test('synthesis rejects fabricated citations and unsupported overview output', async () => {
