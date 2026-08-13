@@ -23,6 +23,10 @@ export function contentTranscriptArtifactsDir(): string {
   return path.join(contentDir(), 'artifacts', 'transcripts');
 }
 
+export function contentDatabasePath(): string {
+  return path.join(contentDir(), 'content.sqlite');
+}
+
 export function contentTempDir(): string {
   return path.join(contentDir(), 'tmp');
 }
