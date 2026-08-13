@@ -7,12 +7,12 @@
   "language": "en",
   "subtitles": {
     "en": [
-      { "ext": "json3", "url": "https://captions.example/creator.json3", "name": "English" }
+      { "ext": "json3", "url": "https://www.youtube.com/api/timedtext?kind=creator", "name": "English" }
     ]
   },
   "automatic_captions": {
     "en": [
-      { "ext": "json3", "url": "https://captions.example/automatic.json3", "name": "English auto-generated" }
+      { "ext": "json3", "url": "https://www.youtube.com/api/timedtext?kind=automatic", "name": "English auto-generated" }
     ]
   }
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import fixture from './fixtures/knowledge-page-youtube.json' with { type: 'json' };
@@ -73,6 +73,8 @@ test('serves items, paginated transcripts, optimistic notes, jobs, and retry thr
     const transcriptBody = await transcript.json() as { data: unknown[]; nextCursor: number };
     assert.equal(transcriptBody.data.length, 1);
     assert.equal(transcriptBody.nextCursor, 1);
+    assert.equal((await fetch(`${server.origin}/api/v1/items?limit=not-a-number`, { headers })).status, 400);
+    assert.equal((await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/transcript?cursor=-1`, { headers })).status, 400);
 
     const mutationHeaders = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
     const note = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/note`, { method: 'PUT', headers: mutationHeaders, body: JSON.stringify({ markdown: 'Remember this.', expectedVersion: 0 }) });
@@ -127,4 +129,23 @@ test('activity and item deletion require a matching second confirmation request'
     assert.equal(deletion.status, 200);
     assert.equal(await repository.getItem(item.canonicalId), null);
   } finally { await server.close(); await repository.close(); }
+});
+
+test('serves authenticated built web assets without weakening the CSP', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-static-'));
+  await mkdir(path.join(dir, 'assets'));
+  await writeFile(path.join(dir, 'index.html'), '<!doctype html><div id="root"></div><script type="module" src="/assets/app.js"></script>');
+  await writeFile(path.join(dir, 'assets', 'app.js'), 'document.body.dataset.ready="true";');
+  const setupValue = await setup();
+  await setupValue.server.close();
+  const server = await startContentServer({ repository: setupValue.repository, staticDir: dir, now: () => Date.parse('2026-08-12T20:00:02.000Z') });
+  try {
+    const { cookie } = await authenticate(server);
+    const index = await fetch(`${server.origin}/`, { headers: { cookie } });
+    assert.match(await index.text(), /\/assets\/app\.js/);
+    const asset = await fetch(`${server.origin}/assets/app.js`, { headers: { cookie } });
+    assert.equal(asset.headers.get('content-type'), 'text/javascript; charset=utf-8');
+    assert.match(await asset.text(), /dataset\.ready/);
+    assert.match(asset.headers.get('content-security-policy')!, /script-src 'self'/);
+  } finally { await server.close(); await setupValue.repository.close(); }
 });

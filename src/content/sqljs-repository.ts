@@ -120,6 +120,7 @@ function initializeSchema(db: Database): void {
 export class SqlJsContentRepository implements ContentRepository {
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
+  private persistenceError: Error | null = null;
 
   private constructor(private readonly db: Database, private readonly filePath: string) {}
 
@@ -133,6 +134,7 @@ export class SqlJsContentRepository implements ContentRepository {
 
   private async exclusive<T>(operation: () => T | Promise<T>): Promise<T> {
     if (this.closed) throw new Error('Content repository is closed.');
+    if (this.persistenceError) throw new Error(`Content repository is unavailable after a persistence failure: ${this.persistenceError.message}`);
     const previous = this.tail;
     let release!: () => void;
     this.tail = new Promise<void>((resolve) => { release = resolve; });
@@ -140,17 +142,30 @@ export class SqlJsContentRepository implements ContentRepository {
     try { return await operation(); } finally { release(); }
   }
 
+  private persist(): void {
+    try {
+      saveDb(this.db, this.filePath);
+    } catch (error) {
+      this.persistenceError = error instanceof Error ? error : new Error(String(error));
+      throw error;
+    }
+  }
+
   private transaction<T>(operation: () => T): T {
     this.db.run('BEGIN IMMEDIATE');
+    let value: T;
     try {
-      const value = operation();
+      value = operation();
       this.db.run('COMMIT');
-      saveDb(this.db, this.filePath);
-      return value;
     } catch (error) {
       this.db.run('ROLLBACK');
       throw error;
     }
+    // Persistence happens after the in-memory transaction is committed. Keep it
+    // outside the rollback block so an I/O failure is reported directly instead
+    // of being masked by a second "no transaction is active" error.
+    this.persist();
+    return value;
   }
 
   async upsertItem(item: StoredContentItem): Promise<void> {
@@ -197,7 +212,7 @@ export class SqlJsContentRepository implements ContentRepository {
       return {
         itemId, artifactHash: String(row.artifact_hash), artifactPath: String(row.artifact_path), acquiredAt: String(row.acquired_at),
         transcript: {
-          schemaVersion: 1, language: String(row.language), segmentationVersion: 1, contentHash: String(row.content_hash),
+          schemaVersion: 1, language: String(row.language), segmentationVersion: Number(row.segmentation_version) as 1, contentHash: String(row.content_hash),
           provenance: { provider: String(row.provider), source: row.provider_source as TranscriptRecord['transcript']['provenance']['source'], ...(row.tool_version ? { toolVersion: String(row.tool_version) } : {}) },
           segments,
         },
@@ -377,11 +392,17 @@ export class SqlJsContentRepository implements ContentRepository {
   }
 
   async checkpoint(): Promise<void> {
-    return this.exclusive(() => { saveDb(this.db, this.filePath); });
+    return this.exclusive(() => { this.persist(); });
   }
 
   async close(): Promise<void> {
-    await this.exclusive(() => { saveDb(this.db, this.filePath); });
+    if (this.persistenceError) {
+      await this.tail;
+      this.db.close();
+      this.closed = true;
+      return;
+    }
+    await this.exclusive(() => { this.persist(); });
     await this.tail;
     this.db.close();
     this.closed = true;

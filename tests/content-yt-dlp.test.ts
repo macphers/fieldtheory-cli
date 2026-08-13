@@ -51,7 +51,7 @@ test('falls back to automatic captions only when creator captions are absent', a
 
 test('uses VTT captions when JSON3 is unavailable', async () => {
   const value = structuredClone(metadata);
-  value.subtitles.en = [{ ext: 'vtt', url: 'https://captions.example/creator.vtt', name: 'English' }];
+  value.subtitles.en = [{ ext: 'vtt', url: 'https://www.youtube.com/api/timedtext?v=test', name: 'English' }];
   const vtt = `WEBVTT\n\n00:00:00.000 --> 00:01:00.000\nThe opening establishes a practical question and why it matters.\n\n00:01:00.000 --> 00:02:00.000\nThe middle introduces a mechanism with evidence and an example.\n\n00:02:00.000 --> 00:03:00.000\nThe conclusion compares tradeoffs and proposes a useful next action.\n`;
   const provider = new YtDlpTranscriptProvider({ runner: new FixtureRunner(value), fetch: fixtureFetch(vtt) });
   const result = await provider.acquire('https://youtu.be/dQw4w9WgXcQ');
@@ -76,10 +76,10 @@ test('classifies unavailable captions and actionable yt-dlp failures', async () 
 
 test('rejects unsafe caption URLs and malformed provider output', async () => {
   const unsafe = structuredClone(metadata);
-  unsafe.subtitles.en[0].url = 'http://127.0.0.1/private';
+  unsafe.subtitles.en[0].url = 'https://127.0.0.1/private';
   const unsafeProvider = new YtDlpTranscriptProvider({ runner: new FixtureRunner(unsafe), fetch: fixtureFetch(captions) });
   await assert.rejects(unsafeProvider.acquire('https://youtu.be/dQw4w9WgXcQ'), (error: unknown) =>
-    error instanceof TranscriptAcquisitionError && error.code === 'invalid_output' && error.message.includes('non-HTTPS'));
+    error instanceof TranscriptAcquisitionError && error.code === 'invalid_output' && error.message.includes('untrusted'));
 
   const malformed = new FixtureRunner();
   malformed.run = async () => ({ exitCode: 0, stdout: '{broken', stderr: '' });

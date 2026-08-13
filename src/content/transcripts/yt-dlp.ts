@@ -108,6 +108,14 @@ function chooseFormat(formats: CaptionFormat[]): CaptionFormat | null {
     ?? null;
 }
 
+function isTrustedCaptionHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === 'youtube.com'
+    || host.endsWith('.youtube.com')
+    || host === 'googlevideo.com'
+    || host.endsWith('.googlevideo.com');
+}
+
 function parseJson3(value: unknown): RawTranscriptSegment[] {
   const events = (value as { events?: Array<{ tStartMs?: number; dDurationMs?: number; segs?: Array<{ utf8?: string }> }> }).events ?? [];
   return events.flatMap((event) => {
@@ -222,8 +230,8 @@ export class YtDlpTranscriptProvider {
     } catch {
       throw new TranscriptAcquisitionError('invalid_output', 'yt-dlp returned an invalid caption URL.', true, 'Update yt-dlp and retry.');
     }
-    if (captionUrl.protocol !== 'https:') {
-      throw new TranscriptAcquisitionError('invalid_output', 'yt-dlp returned a non-HTTPS caption URL.', false, 'Update yt-dlp before retrying.');
+    if (captionUrl.protocol !== 'https:' || !isTrustedCaptionHost(captionUrl.hostname)) {
+      throw new TranscriptAcquisitionError('invalid_output', 'yt-dlp returned an untrusted caption URL.', false, 'Update yt-dlp before retrying.');
     }
 
     let response: Response;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import fixture from './fixtures/knowledge-page-youtube.json' with { type: 'json' };
@@ -62,6 +62,19 @@ test('notes use optimistic versions and survive unrelated processing updates', a
   const second = await repo.putNote(item.canonicalId, 'Updated note', 1, '2026-08-12T20:01:00.000Z');
   assert.equal(second.version, 2);
   assert.equal((await repo.getNote(item.canonicalId))?.markdown, 'Updated note');
+  await repo.close();
+});
+
+test('checkpoint failures report the I/O error and fail the repository closed', async () => {
+  const { item } = domainFixture();
+  const { dir, repo } = await repository();
+  await repo.upsertItem(item);
+  await rename(dir, `${dir}-moved`);
+  await writeFile(dir, 'blocks recreation of the database directory');
+
+  await assert.rejects(repo.putNote(item.canonicalId, 'Cannot checkpoint.', 0, NOW), (error: unknown) =>
+    error instanceof Error && !error.message.toLowerCase().includes('rollback'));
+  await assert.rejects(repo.getItem(item.canonicalId), /unavailable after a persistence failure/);
   await repo.close();
 });
 

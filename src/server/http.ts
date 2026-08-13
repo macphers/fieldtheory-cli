@@ -1,4 +1,7 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ContentRepository } from '../content/repository.js';
 import type { ProcessingStage } from '../jobs/state-machine.js';
 import { ConfirmationChallenges, LocalCapabilitySessions, parseCookies } from './security.js';
@@ -20,6 +23,7 @@ export interface ContentServerOptions {
   port?: number;
   bootstrapTtlMs?: number;
   now?: () => number;
+  staticDir?: string;
 }
 
 export interface RunningContentServer {
@@ -65,7 +69,16 @@ function pathItemId(pathname: string, suffix = ''): string | null {
     ? new RegExp(`^/api/v1/items/([^/]+)/${suffix}$`)
     : /^\/api\/v1\/items\/([^/]+)$/;
   const match = pathname.match(pattern);
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch { return null; }
+}
+
+function integerQuery(value: string | null, fallback: number, minimum: number, maximum: number): number | null {
+  if (value === null) return fallback;
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) return null;
+  return Math.min(maximum, Math.max(minimum, parsed));
 }
 
 export async function startContentServer(options: ContentServerOptions): Promise<RunningContentServer> {
@@ -75,6 +88,7 @@ export async function startContentServer(options: ContentServerOptions): Promise
   const now = options.now ?? Date.now;
   let expectedHost = '';
   let origin = '';
+  const staticDir = path.resolve(options.staticDir ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'web'));
 
   const server = http.createServer(async (request, response) => {
     try {
@@ -108,13 +122,27 @@ export async function startContentServer(options: ContentServerOptions): Promise
       if (request.method === 'GET' && url.pathname === '/') {
         response.statusCode = 200;
         response.setHeader('Content-Type', 'text/html; charset=utf-8');
-        response.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Field Theory</title></head><body><main id="app" data-csrf="${session.csrf}"></main></body></html>`);
+        try { response.end(await readFile(path.join(staticDir, 'index.html'))); }
+        catch { response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Field Theory</title></head><body><main id="root"><p>Field Theory web assets are not built. Run <code>npm run build:web</code>.</p></main></body></html>'); }
+        return;
+      }
+      if (request.method === 'GET' && url.pathname.startsWith('/assets/')) {
+        const assetPath = path.resolve(staticDir, `.${url.pathname}`);
+        if (!assetPath.startsWith(`${staticDir}${path.sep}`)) return apiError(response, 404, { code: 'asset_not_found', message: 'The requested asset does not exist.', retryable: false, action: 'Rebuild the Field Theory web assets.' });
+        try {
+          const extension = path.extname(assetPath);
+          response.statusCode = 200;
+          response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          response.setHeader('Content-Type', extension === '.js' ? 'text/javascript; charset=utf-8' : extension === '.css' ? 'text/css; charset=utf-8' : 'application/octet-stream');
+          response.end(await readFile(assetPath));
+        } catch { return apiError(response, 404, { code: 'asset_not_found', message: 'The requested asset does not exist.', retryable: false, action: 'Rebuild the Field Theory web assets.' }); }
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/v1/session') return json(response, 200, { csrf: session.csrf });
       if (request.method === 'GET' && url.pathname === '/api/v1/items') {
-        const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 50)));
-        const offset = Math.max(0, Number(url.searchParams.get('offset') ?? 0));
+        const limit = integerQuery(url.searchParams.get('limit'), 50, 1, 100);
+        const offset = integerQuery(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
+        if (limit === null || offset === null) return apiError(response, 400, { code: 'invalid_pagination', message: 'Pagination values must be non-negative integers.', retryable: false, action: 'Use integer limit and offset query parameters.' });
         const items = await options.repository.listItems(limit, offset);
         const data = await Promise.all(items.map(async (item) => ({ ...item, status: await options.repository.itemStatus(item.canonicalId, REQUIRED_STAGES) })));
         return json(response, 200, { data, pagination: { limit, offset, count: data.length } });
@@ -130,8 +158,9 @@ export async function startContentServer(options: ContentServerOptions): Promise
       if (request.method === 'GET' && transcriptItemId) {
         const record = await options.repository.getTranscript(transcriptItemId);
         if (!record) return apiError(response, 404, { code: 'transcript_not_ready', message: 'The transcript is not available yet.', retryable: true, action: 'Check the item processing status and retry when the transcript stage completes.' });
-        const cursor = Math.max(0, Number(url.searchParams.get('cursor') ?? 0));
-        const pageSize = Math.min(500, Math.max(1, Number(url.searchParams.get('limit') ?? 200)));
+        const cursor = integerQuery(url.searchParams.get('cursor'), 0, 0, Number.MAX_SAFE_INTEGER);
+        const pageSize = integerQuery(url.searchParams.get('limit'), 200, 1, 500);
+        if (cursor === null || pageSize === null) return apiError(response, 400, { code: 'invalid_pagination', message: 'Transcript pagination values must be non-negative integers.', retryable: false, action: 'Use integer cursor and limit query parameters.' });
         const data = record.transcript.segments.slice(cursor, cursor + pageSize);
         return json(response, 200, { contentHash: record.transcript.contentHash, language: record.transcript.language, data, nextCursor: cursor + data.length < record.transcript.segments.length ? cursor + data.length : null });
       }
