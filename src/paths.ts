@@ -15,6 +15,18 @@ export function fieldTheoryDir(): string {
   return path.join(os.homedir(), '.fieldtheory');
 }
 
+export function contentDir(): string {
+  return process.env.FT_CONTENT_DIR ?? path.join(fieldTheoryDir(), 'content');
+}
+
+export function contentTranscriptArtifactsDir(): string {
+  return path.join(contentDir(), 'artifacts', 'transcripts');
+}
+
+export function contentTempDir(): string {
+  return path.join(contentDir(), 'tmp');
+}
+
 export function browserHelperStatePath(): string {
   return process.env.FT_BROWSER_HELPER_STATE_PATH ?? path.join(fieldTheoryDir(), 'browser-helper.json');
 }

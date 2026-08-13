@@ -1,0 +1,8 @@
+{
+  "result": { "language": "en" },
+  "transcription": [
+    { "timestamps": { "from": "00:00:00,000", "to": "00:01:00,000" }, "text": " The opening establishes a practical question and explains why the problem matters. " },
+    { "timestamps": { "from": "00:01:00,000", "to": "00:02:00,000" }, "text": "The middle introduces a concrete mechanism with evidence and a useful example." },
+    { "timestamps": { "from": "00:02:00,000", "to": "00:03:00,000" }, "text": "The conclusion compares the tradeoffs and proposes a sensible next action." }
+  ]
+}
