@@ -46,6 +46,20 @@ test('bootstrap removes the launch token, sets a strict HttpOnly cookie, and can
   } finally { await server.close(); await repository.close(); }
 });
 
+test('authenticated session outlives the short bootstrap capability', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-session-ttl-'));
+  const repository = await SqlJsContentRepository.open(path.join(dir, 'content.sqlite'));
+  let clock = 1_000;
+  const server = await startContentServer({ repository, now: () => clock, bootstrapTtlMs: 100, sessionTtlMs: 1_000 });
+  try {
+    const { cookie } = await authenticate(server);
+    clock = 1_101;
+    assert.equal((await fetch(`${server.origin}/api/v1/items`, { headers: { cookie } })).status, 200);
+    clock = 2_001;
+    assert.equal((await fetch(`${server.origin}/api/v1/items`, { headers: { cookie } })).status, 401);
+  } finally { await server.close(); await repository.close(); }
+});
+
 test('API rejects unauthenticated, forwarded, wrong-origin, and missing-CSRF requests', async () => {
   const { repository, server, item } = await setup();
   try {

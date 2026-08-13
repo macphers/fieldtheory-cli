@@ -35,6 +35,7 @@ export interface ContentOrchestratorOptions {
   transcriptPipeline: Pick<TranscriptFallbackPipeline, 'acquire'>;
   model?: SynthesisModel & {
     checkSupport: ConstructorParameters<typeof SynthesisPipeline>[0]['checkSupport'];
+    checkSupportBatch?: ConstructorParameters<typeof SynthesisPipeline>[0]['checkSupportBatch'];
     repairClaim?: ConstructorParameters<typeof SynthesisPipeline>[0]['repairClaim'];
   };
   now?: () => Date;
@@ -106,6 +107,7 @@ export class ContentOrchestrator {
           const pipeline = new SynthesisPipeline({
             model: this.options.model,
             checkSupport: this.options.model.checkSupport.bind(this.options.model),
+            ...(this.options.model.checkSupportBatch ? { checkSupportBatch: this.options.model.checkSupportBatch.bind(this.options.model) } : {}),
             ...(this.options.model.repairClaim ? { repairClaim: this.options.model.repairClaim.bind(this.options.model) } : {}),
             now: this.now,
             loadChunk: async (artifactId) => (await this.options.repository.getSynthesisChunk(artifactId))?.draft ?? null,

@@ -23,6 +23,7 @@ export interface ContentServerOptions {
   host?: '127.0.0.1';
   port?: number;
   bootstrapTtlMs?: number;
+  sessionTtlMs?: number;
   now?: () => number;
   staticDir?: string;
   chat?: { answer(itemId: string, question: string, signal?: AbortSignal): Promise<{ answer: string; citations: Array<{ segmentId: string; startMs: number; endMs: number }>; refused: boolean }> };
@@ -104,7 +105,7 @@ export async function startContentServer(options: ContentServerOptions): Promise
       }
       const url = new URL(request.url ?? '/', origin);
       if (request.method === 'GET' && url.pathname === '/bootstrap') {
-        const session = sessions.exchangeBootstrap(url.searchParams.get('token'), now(), options.bootstrapTtlMs ?? 60_000);
+        const session = sessions.exchangeBootstrap(url.searchParams.get('token'), now(), options.sessionTtlMs ?? 12 * 60 * 60_000);
         if (!session) return apiError(response, 401, { code: 'invalid_bootstrap_token', message: 'The launch token is invalid, expired, or already used.', retryable: false, action: 'Run `ft app` again to create a fresh launch URL.' });
         response.statusCode = 303;
         response.setHeader('Set-Cookie', `ft_session=${encodeURIComponent(session.id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`);

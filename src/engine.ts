@@ -16,28 +16,36 @@ import { PromptCancelledError, promptText } from './prompt.js';
 export interface EngineConfig {
   bin: string;
   args: (prompt: string, engine?: Pick<ResolvedEngine, 'model' | 'effort'>) => string[];
+  promptViaStdin?: boolean;
 }
 
 const KNOWN_ENGINES: Record<string, EngineConfig> = {
   claude: {
-    bin: 'claude',
-    args: (p, engine) => [
+    bin: process.env.FT_CLAUDE_PATH ?? 'claude',
+    promptViaStdin: true,
+    args: (_p, engine) => [
       '-p',
       '--output-format',
       'text',
       ...(engine?.model ? ['--model', engine.model] : []),
       ...(engine?.effort ? ['--effort', engine.effort] : []),
-      p,
     ],
   },
   codex: {
-    bin: 'codex',
-    args: (p, engine) => [
+    bin: process.env.FT_CODEX_PATH ?? 'codex',
+    promptViaStdin: true,
+    args: (_p, engine) => [
       'exec',
       '--skip-git-repo-check',
+      '--ignore-user-config',
+      '--ephemeral',
+      '--sandbox',
+      'read-only',
+      '--color',
+      'never',
       ...(engine?.model ? ['--model', engine.model] : []),
       ...(engine?.effort ? ['--config', `model_reasoning_effort="${engine.effort}"`] : []),
-      p,
+      '-',
     ],
   },
 };
@@ -363,7 +371,7 @@ export function invokeEngine(engine: ResolvedEngine, prompt: string, opts: Invok
   const maxBuffer = opts.maxBuffer ?? DEFAULT_MAXBUF;
 
   const result = spawnSync(bin, args(prompt, engine), {
-    input: '',              // EOF on stdin — do not inherit parent stdin
+    input: engine.config.promptViaStdin ? prompt : '',
     timeout,
     maxBuffer,
     encoding: 'buffer',
@@ -434,9 +442,10 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    // Close stdin immediately with EOF so `claude -p` doesn't wait on it.
+    // Deliver large prompts through stdin for real engines and always close
+    // the pipe immediately so children never wait on inherited terminal input.
     // If spawn itself failed (ENOENT etc) `child.stdin` may be null — guard.
-    try { child.stdin?.end(); } catch { /* spawn error will surface below */ }
+    try { child.stdin?.end(engine.config.promptViaStdin ? prompt : ''); } catch { /* spawn error will surface below */ }
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];

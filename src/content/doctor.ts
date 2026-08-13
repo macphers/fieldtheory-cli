@@ -25,10 +25,12 @@ export interface ContentDoctorOptions {
   bookmarksCachePath?: string;
 }
 
-async function executableCheck(runner: ProcessRunner, name: DependencyCheck['name'], command: string, args: string[]): Promise<DependencyCheck> {
+async function executableCheck(runner: ProcessRunner, name: DependencyCheck['name'], command: string, args: string[], versionPattern?: RegExp): Promise<DependencyCheck> {
   try {
     const result = await runner.run({ command, args, timeoutMs: 10_000, maxOutputBytes: 64 * 1024 });
-    return { name, state: 'ready', version: (result.stdout || result.stderr).split('\n')[0].trim(), location: command };
+    const output = [result.stdout, result.stderr].filter(Boolean).join('\n');
+    const version = versionPattern?.exec(output)?.[0] ?? output.split('\n').find((line) => line.trim())?.trim();
+    return { name, state: 'ready', ...(version ? { version } : {}), location: command };
   } catch {
     return { name, state: 'missing', location: command, action: `Install ${name} and ensure ${command} is executable.` };
   }
@@ -43,7 +45,7 @@ export async function inspectContentDependencies(options: ContentDoctorOptions):
   const checks: DependencyCheck[] = await Promise.all([
     executableCheck(options.runner, 'yt-dlp', env.FT_YTDLP_PATH ?? 'yt-dlp', ['--version']),
     executableCheck(options.runner, 'ffmpeg', env.FT_FFMPEG_PATH ?? 'ffmpeg', ['-version']),
-    executableCheck(options.runner, 'whisper.cpp', whisperBinary, ['--help']),
+    executableCheck(options.runner, 'whisper.cpp', whisperBinary, ['--version'], /whisper\.cpp version:\s*[^\s]+/i),
   ]);
 
   const whisper = checks[2];

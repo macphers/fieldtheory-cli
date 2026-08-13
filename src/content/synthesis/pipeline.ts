@@ -41,6 +41,7 @@ export interface SynthesisModel {
 export interface SynthesisPipelineOptions {
   model: SynthesisModel;
   checkSupport(claim: KnowledgeClaim, excerpts: TranscriptSegment[], signal?: AbortSignal): Promise<ClaimSupport>;
+  checkSupportBatch?(values: Array<{ claim: KnowledgeClaim; excerpts: TranscriptSegment[] }>, signal?: AbortSignal): Promise<ClaimSupport[]>;
   repairClaim?(claim: KnowledgeClaim, excerpts: TranscriptSegment[], signal?: AbortSignal): Promise<KnowledgeClaimInput>;
   promptVersion?: number;
   maxInputChars?: number;
@@ -144,9 +145,14 @@ async function supportValidatedClaims(
   signal?: AbortSignal,
 ): Promise<KnowledgeClaim[]> {
   const accepted: KnowledgeClaim[] = [];
-  for (const claim of claims) {
-    const excerpts = citedSegments(claim, transcript);
-    const result = await options.checkSupport(claim, excerpts, signal);
+  const values = claims.map((claim) => ({ claim, excerpts: citedSegments(claim, transcript) }));
+  const results = options.checkSupportBatch
+    ? await options.checkSupportBatch(values, signal)
+    : await Promise.all(values.map(({ claim, excerpts }) => options.checkSupport(claim, excerpts, signal)));
+  if (results.length !== values.length) throw new Error('Claim support batch returned the wrong number of results.');
+  for (let index = 0; index < values.length; index += 1) {
+    const { claim, excerpts } = values[index];
+    const result = results[index];
     if (result === 'supported') {
       accepted.push(claim);
       continue;

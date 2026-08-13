@@ -4,6 +4,7 @@ import fixture from './fixtures/knowledge-page-youtube.json' with { type: 'json'
 import { buildKnowledgePageArtifact, type KnowledgePageFixtureInput } from '../src/content/knowledge-page.js';
 import { partitionTranscript, SynthesisPipeline, type SynthesisModel } from '../src/content/synthesis/pipeline.js';
 import { normalizeTranscript } from '../src/content/knowledge-page.js';
+import { chapterEvidencePayload } from '../src/content/synthesis/chapters.js';
 
 const artifact = buildKnowledgePageArtifact(structuredClone(fixture) as KnowledgePageFixtureInput);
 
@@ -33,6 +34,18 @@ test('partitions long transcripts into overlapping ten-minute windows', () => {
   assert.ok(chunks[0].segments.some((segment) => chunks[1].segments.some((next) => next.id === segment.id)));
 });
 
+test('chapter evidence samples long transcripts across the full timeline under the dispatch ceiling', () => {
+  const transcript = normalizeTranscript('en', { provider: 'fixture', source: 'creator-captions' }, Array.from({ length: 2_000 }, (_, index) => ({
+    startMs: index * 3_000, endMs: (index + 1) * 3_000, text: `Evidence ${index} ${'topic '.repeat(25)}`,
+  })));
+  const payload = chapterEvidencePayload(transcript, 20_000);
+  const records = JSON.parse(payload) as Array<{ startMs: number; endMs: number }>;
+  assert.ok(payload.length <= 20_000);
+  assert.equal(records[0].startMs, 0);
+  assert.equal(records.at(-1)?.endMs, 6_000_000);
+  assert.ok(records.length < transcript.segments.length);
+});
+
 test('synthesis validates structure, citations, support, and deterministic provenance', async () => {
   const model: SynthesisModel = { provider: 'fixture-engine', model: 'fixture-model', generate: async () => draft('Remove this unsupported claim.') };
   const pipeline = new SynthesisPipeline({
@@ -47,6 +60,20 @@ test('synthesis validates structure, citations, support, and deterministic prove
   assert.equal(result.transcriptContentHash, artifact.transcript.contentHash);
   assert.match(result.artifactHash, /^[a-f0-9]{64}$/);
   assert.ok(result.overview.every((claim) => claim.citations.every((citation) => citation.segmentIds.length > 0)));
+});
+
+test('synthesis batches claim support checks without weakening citation validation', async () => {
+  let batchCalls = 0;
+  let singleCalls = 0;
+  const pipeline = new SynthesisPipeline({
+    model: { provider: 'fixture', generate: async () => draft() },
+    checkSupport: async () => { singleCalls += 1; return 'supported'; },
+    checkSupportBatch: async (values) => { batchCalls += 1; return values.map(() => 'supported'); },
+  });
+  const result = await pipeline.synthesize(artifact.transcript, artifact.chapters);
+  assert.equal(result.overview.length, 3);
+  assert.equal(batchCalls, 2);
+  assert.equal(singleCalls, 0);
 });
 
 test('synthesis rejects fabricated citations and unsupported overview output', async () => {

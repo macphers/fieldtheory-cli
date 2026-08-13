@@ -64,6 +64,14 @@ test('invokeEngineAsync: closes stdin so cat-like children see EOF immediately',
   assert.ok(elapsed < 2000, `cat should exit immediately when stdin is closed; elapsed=${elapsed}ms`);
 });
 
+test('invokeEngineAsync streams large prompts through stdin when configured', async () => {
+  const { invokeEngineAsync } = await import('../src/engine.js');
+  const engine = shEngine('fake-stdin', 'wc -c | tr -d " "');
+  engine.config.promptViaStdin = true;
+  const prompt = 'x'.repeat(250_000);
+  assert.equal(await invokeEngineAsync(engine, prompt), String(prompt.length));
+});
+
 test('invokeEngineAsync: timeout kills the child promptly and rejects with a clear message', async () => {
   const { invokeEngineAsync } = await import('../src/engine.js');
   const start = Date.now();
