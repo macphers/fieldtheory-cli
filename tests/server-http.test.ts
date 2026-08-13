@@ -1,0 +1,130 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import fixture from './fixtures/knowledge-page-youtube.json' with { type: 'json' };
+import { buildKnowledgePageArtifact, type KnowledgePageFixtureInput } from '../src/content/knowledge-page.js';
+import { SqlJsContentRepository } from '../src/content/sqljs-repository.js';
+import type { StoredContentItem } from '../src/content/repository.js';
+import { startContentServer } from '../src/server/http.js';
+
+async function setup() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-server-'));
+  const repository = await SqlJsContentRepository.open(path.join(dir, 'content.sqlite'));
+  const artifact = buildKnowledgePageArtifact(structuredClone(fixture) as KnowledgePageFixtureInput);
+  const item: StoredContentItem = { ...artifact.item, language: artifact.transcript.language, createdAt: '2026-08-12T20:00:00.000Z', updatedAt: '2026-08-12T20:00:00.000Z' };
+  await repository.upsertItem(item);
+  await repository.saveTranscript({ itemId: item.canonicalId, artifactHash: artifact.transcript.contentHash, artifactPath: '/artifact.json', transcript: artifact.transcript, acquiredAt: '2026-08-12T20:00:00.000Z' });
+  const job = await repository.enqueueJob(item.canonicalId, 'summary', 'summary-input', 1, '2026-08-12T20:00:00.000Z');
+  await repository.leaseNextJob('worker', '2026-08-12T20:00:00.000Z');
+  await repository.transitionJob(job.id, { state: 'failed', now: '2026-08-12T20:00:01.000Z', errorCode: 'provider_unavailable' });
+  const server = await startContentServer({ repository, now: () => Date.parse('2026-08-12T20:00:02.000Z') });
+  return { repository, server, item, job };
+}
+
+async function authenticate(server: Awaited<ReturnType<typeof startContentServer>>) {
+  const bootstrap = await fetch(server.bootstrapUrl, { redirect: 'manual' });
+  const setCookie = bootstrap.headers.get('set-cookie')!;
+  const cookie = setCookie.split(';')[0];
+  const session = await fetch(`${server.origin}/api/v1/session`, { headers: { cookie } });
+  const { csrf } = await session.json() as { csrf: string };
+  return { bootstrap, cookie, csrf };
+}
+
+test('bootstrap removes the launch token, sets a strict HttpOnly cookie, and cannot be replayed', async () => {
+  const { repository, server } = await setup();
+  try {
+    const { bootstrap } = await authenticate(server);
+    assert.equal(bootstrap.status, 303);
+    assert.equal(bootstrap.headers.get('location'), '/');
+    assert.match(bootstrap.headers.get('set-cookie')!, /HttpOnly; SameSite=Strict/);
+    assert.equal(bootstrap.headers.get('referrer-policy'), 'no-referrer');
+    const replay = await fetch(server.bootstrapUrl, { redirect: 'manual' });
+    assert.equal(replay.status, 401);
+    assert.equal((await replay.json() as { code: string }).code, 'invalid_bootstrap_token');
+  } finally { await server.close(); await repository.close(); }
+});
+
+test('API rejects unauthenticated, forwarded, wrong-origin, and missing-CSRF requests', async () => {
+  const { repository, server, item } = await setup();
+  try {
+    assert.equal((await fetch(`${server.origin}/api/v1/items`)).status, 401);
+    const { cookie, csrf } = await authenticate(server);
+    assert.equal((await fetch(`${server.origin}/api/v1/items`, { headers: { cookie, 'x-forwarded-for': '203.0.113.5' } })).status, 400);
+    assert.equal((await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/note`, { method: 'PUT', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ markdown: 'note', expectedVersion: 0 }) })).status, 403);
+    assert.equal((await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/note`, { method: 'PUT', headers: { cookie, origin: 'https://evil.example', 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' }, body: JSON.stringify({ markdown: 'note', expectedVersion: 0 }) })).status, 403);
+  } finally { await server.close(); await repository.close(); }
+});
+
+test('serves items, paginated transcripts, optimistic notes, jobs, and retry through the versioned API', async () => {
+  const { repository, server, item, job } = await setup();
+  try {
+    const { cookie, csrf } = await authenticate(server);
+    const headers = { cookie };
+    const list = await fetch(`${server.origin}/api/v1/items`, { headers });
+    assert.equal(list.status, 200);
+    const listBody = await list.json() as { data: Array<{ canonicalId: string; status: string }> };
+    assert.equal(listBody.data[0].canonicalId, item.canonicalId);
+    assert.equal(list.headers.get('access-control-allow-origin'), null);
+    assert.match(list.headers.get('content-security-policy')!, /frame-src https:\/\/www\.youtube\.com/);
+
+    const transcript = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/transcript?limit=1`, { headers });
+    const transcriptBody = await transcript.json() as { data: unknown[]; nextCursor: number };
+    assert.equal(transcriptBody.data.length, 1);
+    assert.equal(transcriptBody.nextCursor, 1);
+
+    const mutationHeaders = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
+    const note = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/note`, { method: 'PUT', headers: mutationHeaders, body: JSON.stringify({ markdown: 'Remember this.', expectedVersion: 0 }) });
+    assert.equal(note.status, 200);
+    assert.equal((await note.json() as { version: number }).version, 1);
+    const conflict = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/note`, { method: 'PUT', headers: mutationHeaders, body: JSON.stringify({ markdown: 'Stale.', expectedVersion: 0 }) });
+    assert.equal(conflict.status, 409);
+
+    const jobs = await fetch(`${server.origin}/api/v1/jobs?itemId=${encodeURIComponent(item.canonicalId)}`, { headers });
+    assert.equal((await jobs.json() as { data: unknown[] }).data.length, 1);
+    const retry = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/retry`, { method: 'POST', headers: mutationHeaders, body: JSON.stringify({ jobId: job.id }) });
+    assert.equal(retry.status, 200);
+    assert.equal((await retry.json() as { state: string }).state, 'queued');
+  } finally { await server.close(); await repository.close(); }
+});
+
+test('activity controls stop future writes without clearing existing events', async () => {
+  const { repository, server, item } = await setup();
+  try {
+    const { cookie, csrf } = await authenticate(server);
+    const headers = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
+    const event = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/activity`, { method: 'POST', headers, body: JSON.stringify({ id: 'event-1', type: 'item_opened' }) });
+    assert.equal(event.status, 201);
+    const disable = await fetch(`${server.origin}/api/v1/settings/activity`, { method: 'PUT', headers, body: JSON.stringify({ enabled: false }) });
+    assert.equal(disable.status, 200);
+    const ignored = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/activity`, { method: 'POST', headers, body: JSON.stringify({ id: 'event-2', type: 'note_saved' }) });
+    assert.deepEqual(await ignored.json(), { recorded: false });
+    assert.equal(await repository.clearActivity(), 1);
+  } finally { await server.close(); await repository.close(); }
+});
+
+test('activity and item deletion require a matching second confirmation request', async () => {
+  const { repository, server, item } = await setup();
+  try {
+    const { cookie, csrf } = await authenticate(server);
+    const headers = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
+    await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/activity`, { method: 'POST', headers, body: JSON.stringify({ id: 'event-delete', type: 'item_opened' }) });
+
+    const activityPreview = await fetch(`${server.origin}/api/v1/activity`, { method: 'DELETE', headers, body: '{}' });
+    assert.equal(activityPreview.status, 202);
+    const activityChallenge = await activityPreview.json() as { challenge: string; manifest: { activityEvents: number } };
+    assert.equal(activityChallenge.manifest.activityEvents, 1);
+    const activityDelete = await fetch(`${server.origin}/api/v1/activity`, { method: 'DELETE', headers, body: JSON.stringify({ challenge: activityChallenge.challenge }) });
+    assert.deepEqual(await activityDelete.json(), { deleted: 1 });
+
+    const preview = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}`, { method: 'DELETE', headers, body: '{}' });
+    assert.equal(preview.status, 202);
+    const challenge = await preview.json() as { challenge: string; manifest: { transcriptSegments: number; jobs: number } };
+    assert.equal(challenge.manifest.transcriptSegments, 3);
+    assert.equal(challenge.manifest.jobs, 1);
+    const deletion = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}`, { method: 'DELETE', headers, body: JSON.stringify({ challenge: challenge.challenge }) });
+    assert.equal(deletion.status, 200);
+    assert.equal(await repository.getItem(item.canonicalId), null);
+  } finally { await server.close(); await repository.close(); }
+});

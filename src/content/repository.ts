@@ -43,6 +43,20 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
+export interface ItemDeletionManifest {
+  itemId: string;
+  title: string;
+  sourceRefs: number;
+  transcriptSegments: number;
+  summaries: number;
+  chapters: number;
+  jobs: number;
+  attempts: number;
+  activityEvents: number;
+  hasNote: boolean;
+  artifactPaths: string[];
+}
+
 export interface JobTransitionInput {
   state: JobState;
   now: string;
@@ -72,6 +86,9 @@ export interface ContentRepository {
   setActivityEnabled(enabled: boolean): Promise<void>;
   isActivityEnabled(): Promise<boolean>;
   clearActivity(): Promise<number>;
+  activityCount(): Promise<number>;
+  deletionManifest(itemId: string): Promise<ItemDeletionManifest | null>;
+  deleteItem(itemId: string): Promise<ItemDeletionManifest>;
   checkpoint(): Promise<void>;
   close(): Promise<void>;
 }

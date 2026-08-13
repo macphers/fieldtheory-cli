@@ -117,3 +117,19 @@ test('activity recording can be disabled and cleared independently', async () =>
   assert.equal(await repo.clearActivity(), 0);
   await repo.close();
 });
+
+test('item deletion manifest accounts for dependent records before cascade deletion', async () => {
+  const { item, transcript } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: transcript.contentHash, artifactPath: `/outside-test-root/${transcript.contentHash}.json`, transcript, acquiredAt: NOW });
+  await repo.putNote(item.canonicalId, 'Keep until confirmed.', 0, NOW);
+  await repo.enqueueJob(item.canonicalId, 'metadata', 'delete-input', 1, NOW);
+  await repo.recordActivity({ id: 'delete-event', itemId: item.canonicalId, type: 'item_opened', createdAt: NOW });
+  const manifest = await repo.deletionManifest(item.canonicalId);
+  assert.deepEqual({ segments: manifest?.transcriptSegments, refs: manifest?.sourceRefs, jobs: manifest?.jobs, events: manifest?.activityEvents, note: manifest?.hasNote }, { segments: 3, refs: 1, jobs: 1, events: 1, note: true });
+  await repo.deleteItem(item.canonicalId);
+  assert.equal(await repo.getItem(item.canonicalId), null);
+  assert.equal((await repo.searchTranscript(item.canonicalId, 'mechanism')).length, 0);
+  await repo.close();
+});

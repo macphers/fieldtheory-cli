@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Database } from 'sql.js';
 import { openDb, saveDb } from '../db.js';
 import { assertJobTransition, projectItemStatus, type JobState, type ProcessingJobSnapshot, type ProcessingStage } from '../jobs/state-machine.js';
@@ -6,6 +8,7 @@ import type {
   ActivityEvent,
   ContentRepository,
   ItemNote,
+  ItemDeletionManifest,
   JobTransitionInput,
   StoredContentItem,
   TranscriptRecord,
@@ -331,6 +334,46 @@ export class SqlJsContentRepository implements ContentRepository {
 
   async clearActivity(): Promise<number> {
     return this.exclusive(() => this.transaction(() => { const count = Number(first(this.db, 'SELECT COUNT(*) AS count FROM activity_events')?.count ?? 0); this.db.run('DELETE FROM activity_events'); return count; }));
+  }
+
+  async activityCount(): Promise<number> {
+    return this.exclusive(() => Number(first(this.db, 'SELECT COUNT(*) AS count FROM activity_events')?.count ?? 0));
+  }
+
+  private deletionManifestSync(itemId: string): ItemDeletionManifest | null {
+    const item = first(this.db, 'SELECT title FROM content_items WHERE id=?', [itemId]);
+    if (!item) return null;
+    const count = (table: string, column = 'item_id') => Number(first(this.db, `SELECT COUNT(*) AS count FROM ${table} WHERE ${column}=?`, [itemId])?.count ?? 0);
+    const artifactPaths = rows(this.db, 'SELECT artifact_path FROM transcripts WHERE item_id=?', [itemId]).map((row) => String(row.artifact_path));
+    return {
+      itemId, title: String(item.title), sourceRefs: count('source_refs'), transcriptSegments: count('transcript_segments'),
+      summaries: count('summaries'), chapters: count('chapters'), jobs: count('processing_jobs'),
+      attempts: Number(first(this.db, `SELECT COUNT(*) AS count FROM processing_attempts WHERE job_id IN (SELECT id FROM processing_jobs WHERE item_id=?)`, [itemId])?.count ?? 0),
+      activityEvents: count('activity_events'), hasNote: count('notes') > 0, artifactPaths,
+    };
+  }
+
+  async deletionManifest(itemId: string): Promise<ItemDeletionManifest | null> {
+    return this.exclusive(() => this.deletionManifestSync(itemId));
+  }
+
+  async deleteItem(itemId: string): Promise<ItemDeletionManifest> {
+    return this.exclusive(() => {
+      const manifest = this.deletionManifestSync(itemId);
+      if (!manifest) throw new Error(`Unknown content item: ${itemId}.`);
+      this.transaction(() => {
+        this.db.run('DELETE FROM transcript_fts WHERE item_id=?', [itemId]);
+        this.db.run('DELETE FROM content_items WHERE id=?', [itemId]);
+      });
+      const contentRoot = path.resolve(path.dirname(this.filePath));
+      for (const artifactPath of manifest.artifactPaths) {
+        const resolved = path.resolve(artifactPath);
+        if (resolved.startsWith(`${contentRoot}${path.sep}`)) {
+          try { fs.rmSync(resolved, { force: true }); } catch { /* orphan sweep will retry */ }
+        }
+      }
+      return manifest;
+    });
   }
 
   async checkpoint(): Promise<void> {
