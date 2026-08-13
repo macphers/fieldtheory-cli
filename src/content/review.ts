@@ -27,6 +27,16 @@ function citedText(claim: KnowledgeClaim, segments: TranscriptSegment[], citatio
   return segments.filter((segment) => ids.has(segment.id)).map((segment) => segment.text).join(' ');
 }
 
+function reviewRisk(claim: KnowledgeClaim): { score: number; reasons: string[] } {
+  const reasons: string[] = [];
+  if (/\b\d[\d,.]*\b|[$€£¥]|%/.test(claim.text)) reasons.push('exact number');
+  if (/\b(because|caused?|therefore|result(?:ed|ing)?|leading|allow(?:ed|ing)?|saved|due to)\b/i.test(claim.text)) reasons.push('causal claim');
+  if (/\b(all|always|never|only|every|first|entire|none)\b/i.test(claim.text)) reasons.push('broad or exclusive wording');
+  if (claim.text.length >= 180) reasons.push('long compound claim');
+  if (claim.citations.length === 1) reasons.push('single citation');
+  return { score: reasons.length, reasons };
+}
+
 function claimSection(item: StoredContentItem, transcript: TranscriptRecord, claim: KnowledgeClaim, label: string): string {
   const evidence = claim.citations.map((citation, index) => {
     const startSeconds = Math.floor(citation.startMs / 1000);
@@ -39,13 +49,20 @@ function claimSection(item: StoredContentItem, transcript: TranscriptRecord, cla
 
 export function buildClaimReviewPacket(items: ClaimReviewItem[], generatedAt = new Date().toISOString()): string {
   const claimCount = items.reduce((total, record) => total + record.summary.overview.length + record.summary.details.length, 0);
+  const prioritized = items.flatMap(({ item, summary }, itemIndex) => [
+    ...summary.overview.map((claim, index) => ({ item, claim, label: `${itemIndex + 1}-O${index + 1}`, ...reviewRisk(claim) })),
+    ...summary.details.map((claim, index) => ({ item, claim, label: `${itemIndex + 1}-D${index + 1}`, ...reviewRisk(claim) })),
+  ]).sort((left, right) => right.score - left.score || right.claim.text.length - left.claim.text.length || left.label.localeCompare(right.label)).slice(0, 20);
+  const priorityQueue = prioritized.map(({ item, claim, label, reasons }) =>
+    `- [${label}](#${label.toLowerCase()}) — ${item.title}: ${reasons.join(', ')}\n  - ${claim.text}`,
+  ).join('\n');
   const sections = items.map(({ item, transcript, summary }, itemIndex) => {
-    const overview = summary.overview.map((claim, index) => claimSection(item, transcript, claim, `O${index + 1}`)).join('\n\n');
-    const details = summary.details.map((claim, index) => claimSection(item, transcript, claim, `D${index + 1}`)).join('\n\n');
+    const overview = summary.overview.map((claim, index) => claimSection(item, transcript, claim, `${itemIndex + 1}-O${index + 1}`)).join('\n\n');
+    const details = summary.details.map((claim, index) => claimSection(item, transcript, claim, `${itemIndex + 1}-D${index + 1}`)).join('\n\n');
     return `## ${itemIndex + 1}. ${item.title}\n\nSource: ${item.canonicalUrl}\n\nClaims: ${summary.overview.length + summary.details.length} (${summary.overview.length} overview, ${summary.details.length} detail)\n\n### Overview claims\n\n${overview}\n\n### Detail claims\n\n${details}`;
   }).join('\n\n---\n\n');
 
-  return `# Knowledge Pages Claim Review\n\nGenerated: ${generatedAt}\n\nItems: ${items.length}  \nClaims: ${claimCount}\n\nReview every claim against its quoted evidence and timestamped source. Check exactly one verdict. A supported claim must not be broader or more certain than its cited excerpt.\n\nFinal tally: Supported ____ / ${claimCount}  ·  Unsupported ____  ·  Needs edit ____  ·  Precision ____%\n\n${sections}\n`;
+  return `# Knowledge Pages Claim Review\n\nGenerated: ${generatedAt}\n\nItems: ${items.length}  \nClaims: ${claimCount}\n\nReview every claim against its quoted evidence and timestamped source. Check exactly one verdict. A supported claim must not be broader or more certain than its cited excerpt.\n\nFinal tally: Supported ____ / ${claimCount}  ·  Unsupported ____  ·  Needs edit ____  ·  Precision ____%\n\n## Priority review queue\n\nUp to 20 claims rank highest by deterministic review risk: exact numbers, causal or broad wording, compound length, and single-citation support. Risk rank is triage, not a verdict. Every claim still requires review.\n\n${priorityQueue}\n\n${sections}\n`;
 }
 
 export async function loadClaimReviewPacket(repository: ContentRepository, generatedAt = new Date().toISOString()): Promise<string> {

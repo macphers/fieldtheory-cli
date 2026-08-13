@@ -32,8 +32,10 @@ test('claim review packet includes every claim, timestamped evidence, and verdic
   assert.match(packet, /Items: 1/);
   assert.match(packet, new RegExp(`Claims: ${artifact.overview.length + artifact.details.length}`));
   assert.match(packet, /Verdict: \[ \] Supported  \[ \] Unsupported  \[ \] Needs edit/);
-  assert.match(packet, /### O1/);
-  assert.match(packet, /### D1/);
+  assert.match(packet, /## Priority review queue/);
+  assert.match(packet, /\[1-O1\]\(#1-o1\)/);
+  assert.match(packet, /### 1-O1/);
+  assert.match(packet, /### 1-D1/);
   assert.match(packet, /[?&]t=0s/);
   assert.match(packet, /> The opening establishes the central question/);
 });
