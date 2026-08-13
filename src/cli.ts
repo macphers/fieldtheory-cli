@@ -33,7 +33,10 @@ import { exportBookmarks } from './md-export.js';
 import { renderViz } from './bookmarks-viz.js';
 import { listBrowserIds } from './browsers.js';
 import { configureHttpProxyFromEnv } from './http-proxy.js';
-import { canonicalLibraryDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
+import { canonicalLibraryDir, contentDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
+import { runContentApp } from './content/app.js';
+import { inspectContentDependencies } from './content/doctor.js';
+import { NodeProcessRunner } from './content/process-runner.js';
 import { PromptCancelledError, promptText } from './prompt.js';
 import { skillWithFrontmatter, installSkill, uninstallSkill } from './skill.js';
 import { registerCompanionCommands } from './companion-cli.js';
@@ -821,6 +824,37 @@ export function buildCli() {
       console.log(logo());
       showWhatsNew();
     });
+
+  // ── local knowledge app ────────────────────────────────────────────────
+
+  const appCommand = program
+    .command('app')
+    .description('Open the local knowledge library and process saved media')
+    .option('--no-sync', 'Use the existing bookmark cache without syncing X')
+    .option('--no-open', 'Print the authenticated URL without opening a browser')
+    .addOption(engineOption())
+    .action(safe(async (options) => {
+      await runContentApp({
+        engine: options.engine ? String(options.engine) : undefined,
+        sync: options.sync,
+        open: options.open,
+        onStatus: (message) => process.stderr.write(`  ${message}\n`),
+      });
+    }));
+
+  appCommand
+    .command('doctor')
+    .description('Check local knowledge-page dependencies')
+    .action(safe(async () => {
+      const checks = await inspectContentDependencies({ runner: new NodeProcessRunner(), contentRoot: contentDir() });
+      for (const check of checks) {
+        const mark = check.state === 'ready' ? '\u2713' : check.state === 'unsupported' ? '!' : '\u2717';
+        const detail = check.version ?? check.location ?? check.action ?? '';
+        console.log(`  ${mark} ${check.name}: ${check.state}${detail ? ` — ${detail}` : ''}`);
+        if (check.action && detail !== check.action) console.log(`    ${check.action}`);
+      }
+      if (checks.some((check) => check.state !== 'ready')) process.exitCode = 1;
+    }));
 
   // ── sync ────────────────────────────────────────────────────────────────
 

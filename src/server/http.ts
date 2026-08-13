@@ -26,6 +26,7 @@ export interface ContentServerOptions {
   now?: () => number;
   staticDir?: string;
   chat?: { answer(itemId: string, question: string, signal?: AbortSignal): Promise<{ answer: string; citations: Array<{ segmentId: string; startMs: number; endMs: number }>; refused: boolean }> };
+  cancelJob?: (jobId: string) => Promise<void>;
 }
 
 export interface RunningContentServer {
@@ -194,6 +195,26 @@ export async function startContentServer(options: ContentServerOptions): Promise
         if (!job) return apiError(response, 404, { code: 'job_not_found', message: 'The requested job does not belong to this item.', retryable: false, action: 'Reload the item status.' });
         try { return json(response, 200, await options.repository.retryJob(job.id, new Date(now()).toISOString())); }
         catch (error) { return apiError(response, 409, { code: 'job_not_retryable', message: error instanceof Error ? error.message : String(error), retryable: false, action: 'Wait for active work to finish or retry a failed, blocked, or cancelled stage.' }); }
+      }
+      const cancelItemId = pathItemId(url.pathname, 'cancel');
+      if (request.method === 'POST' && cancelItemId) {
+        const body = await readJson(request) as { jobId?: unknown };
+        if (typeof body.jobId !== 'string') return apiError(response, 400, { code: 'invalid_cancel', message: 'Cancel requires a jobId.', retryable: false, action: 'Reload job status and select active work.' });
+        const job = (await options.repository.listJobs(cancelItemId)).find((candidate) => candidate.id === body.jobId);
+        if (!job) return apiError(response, 404, { code: 'job_not_found', message: 'The requested job does not belong to this item.', retryable: false, action: 'Reload the item status.' });
+        try {
+          if (job.state === 'running' && options.cancelJob) await options.cancelJob(job.id);
+          else await options.repository.cancelJob(job.id, new Date(now()).toISOString());
+          return json(response, 200, { cancelled: true });
+        } catch (error) { return apiError(response, 409, { code: 'job_not_cancellable', message: error instanceof Error ? error.message : String(error), retryable: false, action: 'Reload the current processing state.' }); }
+      }
+      const overrideItemId = pathItemId(url.pathname, 'transcription-override');
+      if (request.method === 'PUT' && overrideItemId) {
+        const body = await readJson(request) as { allowLong?: unknown; retryJobId?: unknown };
+        if (typeof body.allowLong !== 'boolean') return apiError(response, 400, { code: 'invalid_override', message: 'Transcription override requires allowLong:true or false.', retryable: false, action: 'Confirm the per-item long transcription choice.' });
+        await options.repository.setLongTranscriptionOverride(overrideItemId, body.allowLong);
+        if (body.allowLong && typeof body.retryJobId === 'string') await options.repository.retryJob(body.retryJobId, new Date(now()).toISOString());
+        return json(response, 200, { allowLong: body.allowLong });
       }
       const chatItemId = pathItemId(url.pathname, 'chat');
       if (request.method === 'POST' && chatItemId) {

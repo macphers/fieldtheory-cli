@@ -23,9 +23,9 @@ export interface ProcessingJobSnapshot {
 }
 
 const LEGAL_TRANSITIONS: Record<JobState, readonly JobState[]> = {
-  queued: ['running'],
+  queued: ['running', 'cancelled'],
   running: ['succeeded', 'retry_wait', 'failed', 'blocked', 'cancelled', 'interrupted'],
-  retry_wait: ['queued'],
+  retry_wait: ['queued', 'cancelled'],
   succeeded: [],
   failed: ['queued'],
   blocked: ['queued'],

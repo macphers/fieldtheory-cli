@@ -91,6 +91,20 @@ test('serves items, paginated transcripts, optimistic notes, jobs, and retry thr
   } finally { await server.close(); await repository.close(); }
 });
 
+test('processing controls persist long-transcription consent and cancel queued work', async () => {
+  const { repository, server, item, job } = await setup();
+  try {
+    const { cookie, csrf } = await authenticate(server);
+    const headers = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
+    const override = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/transcription-override`, { method: 'PUT', headers, body: JSON.stringify({ allowLong: true, retryJobId: job.id }) });
+    assert.equal(override.status, 200);
+    assert.equal(await repository.hasLongTranscriptionOverride(item.canonicalId), true);
+    const cancel = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/cancel`, { method: 'POST', headers, body: JSON.stringify({ jobId: job.id }) });
+    assert.equal(cancel.status, 200);
+    assert.equal((await repository.listJobs(item.canonicalId))[0].state, 'cancelled');
+  } finally { await server.close(); await repository.close(); }
+});
+
 test('activity controls stop future writes without clearing existing events', async () => {
   const { repository, server, item } = await setup();
   try {

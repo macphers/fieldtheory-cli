@@ -64,3 +64,24 @@ export async function askItem(id: string, question: string): Promise<ChatAnswer>
     body: JSON.stringify({ question }),
   }));
 }
+
+async function jobMutation(id: string, action: 'retry' | 'cancel', jobId: string): Promise<void> {
+  const csrf = await sessionCsrf();
+  await responseJson(await fetch(`/api/v1/items/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-FieldTheory-CSRF': csrf },
+    body: JSON.stringify({ jobId }),
+  }));
+}
+
+export function retryJob(id: string, jobId: string): Promise<void> { return jobMutation(id, 'retry', jobId); }
+export function cancelJob(id: string, jobId: string): Promise<void> { return jobMutation(id, 'cancel', jobId); }
+
+export async function allowLongTranscription(id: string, retryJobId: string): Promise<void> {
+  const csrf = await sessionCsrf();
+  await responseJson(await fetch(`/api/v1/items/${encodeURIComponent(id)}/transcription-override`, {
+    method: 'PUT', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-FieldTheory-CSRF': csrf },
+    body: JSON.stringify({ allowLong: true, retryJobId }),
+  }));
+}

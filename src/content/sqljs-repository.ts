@@ -53,6 +53,7 @@ function itemFromRow(db: Database, row: Record<string, unknown>): StoredContentI
     durationMs: Number(row.duration_ms), sourceRefs, createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     ...(row.thumbnail_url ? { thumbnailUrl: String(row.thumbnail_url) } : {}),
     ...(row.language ? { language: String(row.language) } : {}),
+    ...(row.source_chapters_json ? { creatorChapters: JSON.parse(String(row.source_chapters_json)) } : {}),
   };
 }
 
@@ -62,7 +63,7 @@ function initializeSchema(db: Database): void {
   db.run(`CREATE TABLE IF NOT EXISTS content_items (
     id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type = 'youtube'), video_id TEXT NOT NULL UNIQUE,
     canonical_url TEXT NOT NULL, title TEXT NOT NULL, creator TEXT NOT NULL, duration_ms INTEGER NOT NULL,
-    thumbnail_url TEXT, language TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    thumbnail_url TEXT, language TEXT, source_chapters_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
   )`);
   db.run(`CREATE TABLE IF NOT EXISTS source_refs (
     item_id TEXT NOT NULL REFERENCES content_items(id) ON DELETE CASCADE, bookmark_id TEXT NOT NULL,
@@ -115,7 +116,13 @@ function initializeSchema(db: Database): void {
     id TEXT PRIMARY KEY, item_id TEXT NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
     type TEXT NOT NULL, metadata_json TEXT, created_at TEXT NOT NULL
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS item_settings (
+    item_id TEXT PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE,
+    allow_long_transcription INTEGER NOT NULL DEFAULT 0 CHECK(allow_long_transcription IN (0,1))
+  )`);
   db.run(`INSERT OR IGNORE INTO meta(key, value) VALUES ('activity_enabled', 'true')`);
+  const itemColumns = rows(db, 'PRAGMA table_info(content_items)').map((row) => String(row.name));
+  if (!itemColumns.includes('source_chapters_json')) db.run('ALTER TABLE content_items ADD COLUMN source_chapters_json TEXT');
   db.run(`INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)`, [String(SCHEMA_VERSION)]);
 }
 
@@ -172,10 +179,10 @@ export class SqlJsContentRepository implements ContentRepository {
 
   async upsertItem(item: StoredContentItem): Promise<void> {
     return this.exclusive(() => this.transaction(() => {
-      this.db.run(`INSERT INTO content_items(id,type,video_id,canonical_url,title,creator,duration_ms,thumbnail_url,language,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_url=excluded.canonical_url,title=excluded.title,
-        creator=excluded.creator,duration_ms=excluded.duration_ms,thumbnail_url=excluded.thumbnail_url,language=excluded.language,updated_at=excluded.updated_at`,
-      [item.canonicalId, item.type, item.videoId, item.canonicalUrl, item.title, item.creator, item.durationMs, item.thumbnailUrl ?? null, item.language ?? null, item.createdAt, item.updatedAt]);
+      this.db.run(`INSERT INTO content_items(id,type,video_id,canonical_url,title,creator,duration_ms,thumbnail_url,language,source_chapters_json,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_url=excluded.canonical_url,title=excluded.title,
+        creator=excluded.creator,duration_ms=excluded.duration_ms,thumbnail_url=excluded.thumbnail_url,language=excluded.language,source_chapters_json=excluded.source_chapters_json,updated_at=excluded.updated_at`,
+      [item.canonicalId, item.type, item.videoId, item.canonicalUrl, item.title, item.creator, item.durationMs, item.thumbnailUrl ?? null, item.language ?? null, item.creatorChapters ? JSON.stringify(item.creatorChapters) : null, item.createdAt, item.updatedAt]);
       for (const ref of item.sourceRefs) this.db.run(`INSERT OR IGNORE INTO source_refs VALUES (?,?,?,?,?)`, [item.canonicalId, ref.bookmarkId, ref.bookmarkUrl, ref.sourceUrl, ref.discoveredAt]);
     }));
   }
@@ -375,12 +382,34 @@ export class SqlJsContentRepository implements ContentRepository {
     }));
   }
 
+  async cancelJob(jobId: string, now: string): Promise<ProcessingJobSnapshot> {
+    return this.exclusive(() => this.transaction(() => {
+      const row = first(this.db, 'SELECT * FROM processing_jobs WHERE id=?', [jobId]);
+      if (!row) throw new Error(`Unknown processing job: ${jobId}.`);
+      const state = row.state as JobState;
+      if (!['queued', 'retry_wait'].includes(state)) throw new Error(`Job in ${state} cannot be cancelled directly.`);
+      return this.transitionJobSync(jobId, { state: 'cancelled', now, errorCode: 'cancelled_by_user', errorDetail: 'Cancelled by the user.' });
+    }));
+  }
+
   async listJobs(itemId?: string): Promise<ProcessingJobSnapshot[]> {
     return this.exclusive(() => rows(this.db, `SELECT * FROM processing_jobs ${itemId ? 'WHERE item_id=?' : ''} ORDER BY created_at,id`, itemId ? [itemId] : []).map(jobFromRow));
   }
 
   async itemStatus(itemId: string, requiredStages: readonly ProcessingStage[]): Promise<ReturnType<typeof projectItemStatus>> {
     return projectItemStatus(await this.listJobs(itemId), requiredStages);
+  }
+
+  async setLongTranscriptionOverride(itemId: string, enabled: boolean): Promise<void> {
+    return this.exclusive(() => this.transaction(() => {
+      if (!first(this.db, 'SELECT id FROM content_items WHERE id=?', [itemId])) throw new Error(`Unknown content item: ${itemId}.`);
+      this.db.run(`INSERT INTO item_settings(item_id,allow_long_transcription) VALUES (?,?)
+        ON CONFLICT(item_id) DO UPDATE SET allow_long_transcription=excluded.allow_long_transcription`, [itemId, enabled ? 1 : 0]);
+    }));
+  }
+
+  async hasLongTranscriptionOverride(itemId: string): Promise<boolean> {
+    return this.exclusive(() => Number(first(this.db, 'SELECT allow_long_transcription FROM item_settings WHERE item_id=?', [itemId])?.allow_long_transcription ?? 0) === 1);
   }
 
   private recoverExpiredLeasesSync(now: string): number {

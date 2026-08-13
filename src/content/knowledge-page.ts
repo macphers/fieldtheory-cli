@@ -125,7 +125,7 @@ export function creatorChaptersAreUsable(chapters: RawChapter[], durationMs: num
   return coveredMs / durationMs >= 0.7;
 }
 
-function generatedChaptersAreValid(chapters: RawChapter[], durationMs: number): boolean {
+export function generatedChaptersAreValid(chapters: RawChapter[], durationMs: number): boolean {
   if (chapters.length === 0) return false;
   return chapters.every((chapter, index) =>
     chapter.source === 'generated'

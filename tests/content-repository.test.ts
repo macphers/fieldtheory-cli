@@ -133,6 +133,19 @@ test('projects aggregate item status from required current jobs', async () => {
   await repo.close();
 });
 
+test('persists per-item long transcription consent and supports queued cancellation', async () => {
+  const { item } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  assert.equal(await repo.hasLongTranscriptionOverride(item.canonicalId), false);
+  await repo.setLongTranscriptionOverride(item.canonicalId, true);
+  assert.equal(await repo.hasLongTranscriptionOverride(item.canonicalId), true);
+  const job = await repo.enqueueJob(item.canonicalId, 'transcript', 'cancel-input', 1, NOW);
+  assert.equal((await repo.cancelJob(job.id, NOW)).state, 'cancelled');
+  assert.equal((await repo.retryJob(job.id, NOW)).state, 'queued');
+  await repo.close();
+});
+
 test('activity recording can be disabled and cleared independently', async () => {
   const { item } = domainFixture();
   const { repo } = await repository();

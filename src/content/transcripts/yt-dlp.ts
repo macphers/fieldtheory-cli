@@ -19,6 +19,7 @@ interface YtDlpMetadata {
   language?: string;
   subtitles?: Record<string, CaptionFormat[]>;
   automatic_captions?: Record<string, CaptionFormat[]>;
+  chapters?: Array<{ start_time?: number; end_time?: number; title?: string }>;
 }
 
 export interface YtDlpMediaMetadata {
@@ -28,6 +29,15 @@ export interface YtDlpMediaMetadata {
   durationMs: number;
   thumbnailUrl?: string;
   language?: string;
+  creatorChapters?: Array<{ startMs: number; endMs: number; label: string; source: 'creator' }>;
+}
+
+function metadataChapters(metadata: YtDlpMetadata): YtDlpMediaMetadata['creatorChapters'] {
+  const chapters = (metadata.chapters ?? []).flatMap((chapter) => {
+    if (!Number.isFinite(chapter.start_time) || !Number.isFinite(chapter.end_time) || chapter.end_time! <= chapter.start_time! || !chapter.title?.trim()) return [];
+    return [{ startMs: Math.round(chapter.start_time! * 1000), endMs: Math.round(chapter.end_time! * 1000), label: chapter.title.trim(), source: 'creator' as const }];
+  });
+  return chapters.length > 0 ? chapters : undefined;
 }
 
 export type TranscriptFailureCode =
@@ -208,6 +218,7 @@ export class YtDlpTranscriptProvider {
       durationMs: Math.round(metadata.duration! * 1000),
       ...(metadata.thumbnail ? { thumbnailUrl: metadata.thumbnail } : {}),
       ...(metadata.language ? { language: metadata.language } : {}),
+      ...(metadataChapters(metadata) ? { creatorChapters: metadataChapters(metadata) } : {}),
     };
   }
 
@@ -268,6 +279,7 @@ export class YtDlpTranscriptProvider {
         durationMs,
         ...(metadata.thumbnail ? { thumbnailUrl: metadata.thumbnail } : {}),
         language,
+        ...(metadataChapters(metadata) ? { creatorChapters: metadataChapters(metadata) } : {}),
       },
       captionKind,
       transcript: normalizeTranscript(language, {

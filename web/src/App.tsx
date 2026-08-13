@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { askItem, getItem, getTranscript, listItems, recordActivity, saveNote } from './api';
+import { allowLongTranscription, askItem, cancelJob, getItem, getTranscript, listItems, recordActivity, retryJob, saveNote } from './api';
 import type { ChatAnswer, KnowledgeItem, TranscriptSegment } from './types';
 
 export function formatTimestamp(milliseconds: number): string {
@@ -45,7 +45,7 @@ function TimestampButton({ milliseconds, onSeek, children }: { milliseconds: num
   </button>;
 }
 
-export function ItemPage({ item, transcript, onLibrary }: { item: KnowledgeItem; transcript: TranscriptSegment[]; onLibrary: () => void }) {
+export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: KnowledgeItem; transcript: TranscriptSegment[]; onLibrary: () => void; onRefresh?: () => Promise<void> | void }) {
   const [tab, setTab] = useState<'chapters' | 'transcript'>(item.chapters?.length ? 'chapters' : 'transcript');
   const [note, setNote] = useState(item.note?.markdown ?? '');
   const [noteVersion, setNoteVersion] = useState<number | null>(item.note?.version ?? 0);
@@ -54,6 +54,7 @@ export function ItemPage({ item, transcript, onLibrary }: { item: KnowledgeItem;
   const [question, setQuestion] = useState('');
   const [chat, setChat] = useState<ChatAnswer | null>(null);
   const [chatState, setChatState] = useState<'idle' | 'asking' | 'error'>('idle');
+  const [jobState, setJobState] = useState<'idle' | 'working' | 'error'>('idle');
   const player = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => { trackActivity(item.canonicalId, 'item_opened'); }, [item.canonicalId]);
@@ -83,6 +84,18 @@ export function ItemPage({ item, transcript, onLibrary }: { item: KnowledgeItem;
       setChatState('error');
     }
   };
+  const activeJob = item.jobs?.find((job) => ['running', 'queued', 'retry_wait'].includes(job.state));
+  const problemJob = item.jobs?.find((job) => ['failed', 'blocked', 'cancelled'].includes(job.state));
+  const runJobAction = async (action: 'retry' | 'cancel' | 'allow-long', jobId: string) => {
+    setJobState('working');
+    try {
+      if (action === 'retry') await retryJob(item.canonicalId, jobId);
+      else if (action === 'cancel') await cancelJob(item.canonicalId, jobId);
+      else await allowLongTranscription(item.canonicalId, jobId);
+      setJobState('idle');
+      await onRefresh?.();
+    } catch { setJobState('error'); }
+  };
 
   return <div className="app-shell">
     <Rail onLibrary={onLibrary} />
@@ -97,7 +110,14 @@ export function ItemPage({ item, transcript, onLibrary }: { item: KnowledgeItem;
           {embedFailed ? <div className="embed-fallback"><p>This video cannot be embedded.</p><a href={item.canonicalUrl} target="_blank" rel="noreferrer">Open on YouTube ↗</a></div>
             : <iframe ref={player} src={youtubeEmbedUrl(item.videoId)} title={item.title} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowFullScreen onError={() => setEmbedFailed(true)} />}
         </div>
-        <p className={`status-line status-${item.status}`} role="status">{statusMessage(item)}</p>
+        <div className={`status-line status-${item.status}`} role="status">
+          <span>{statusMessage(item)}</span>
+          {problemJob ? <span className="status-actions">
+            {problemJob.lastErrorCode === 'captions_unavailable' ? <button disabled={jobState === 'working'} onClick={() => { if (window.confirm('Allow local transcription beyond the normal two-hour limit for this item?')) void runJobAction('allow-long', problemJob.id); }}>Transcribe anyway</button> : null}
+            <button disabled={jobState === 'working'} onClick={() => void runJobAction('retry', problemJob.id)}>Retry</button>
+          </span> : activeJob ? <span className="status-actions"><button disabled={jobState === 'working'} onClick={() => void runJobAction('cancel', activeJob.id)}>Cancel</button></span> : null}
+          {jobState === 'error' ? <span>Could not update processing. Reload and try again.</span> : null}
+        </div>
 
         <section className="source-surface" aria-label="Source navigation">
           <div className="source-controls" aria-hidden="true"><span>↶</span><span className="play-dot">▶</span><span>↷</span><span className="star">☆</span></div>
@@ -155,10 +175,22 @@ export default function App() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   useEffect(() => { void loadLibrary(); }, []);
+  useEffect(() => {
+    if (!selected || selected.status !== 'processing') return;
+    const timer = window.setInterval(() => {
+      void Promise.all([getItem(selected.canonicalId), getTranscript(selected.canonicalId)]).then(([item, segments]) => {
+        setSelected(item); setTranscript(segments);
+      }).catch(() => undefined);
+    }, 1_500);
+    return () => window.clearInterval(timer);
+  }, [selected?.canonicalId, selected?.status]);
 
   if (error) return <main className="empty-library"><p className="eyebrow">Field Theory</p><h1>Couldn’t open the library.</h1><p>{error}</p><button onClick={() => void loadLibrary()}>Try again</button></main>;
   if (items === null) return <main className="empty-library" aria-busy="true"><p>Opening your library…</p></main>;
   if (items.length === 0) return <EmptyLibrary />;
   if (!selected) return <main className="empty-library" aria-busy="true"><p>Preparing the page…</p></main>;
-  return <ItemPage item={selected} transcript={transcript} onLibrary={() => void loadLibrary()} />;
+  return <ItemPage item={selected} transcript={transcript} onLibrary={() => void loadLibrary()} onRefresh={async () => {
+    setSelected(await getItem(selected.canonicalId));
+    setTranscript(await getTranscript(selected.canonicalId));
+  }} />;
 }

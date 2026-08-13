@@ -7,6 +7,7 @@ export interface StoredContentItem extends DiscoveredContentItem {
   durationMs: number;
   thumbnailUrl?: string;
   language?: string;
+  creatorChapters?: RawChapter[];
   createdAt: string;
   updatedAt: string;
 }
@@ -106,9 +107,12 @@ export interface ContentRepository {
   renewJobLease(jobId: string, workerId: string, now: string, leaseMs?: number): Promise<ProcessingJobSnapshot>;
   transitionJob(jobId: string, input: JobTransitionInput): Promise<ProcessingJobSnapshot>;
   retryJob(jobId: string, now: string): Promise<ProcessingJobSnapshot>;
+  cancelJob(jobId: string, now: string): Promise<ProcessingJobSnapshot>;
   listJobs(itemId?: string): Promise<ProcessingJobSnapshot[]>;
   itemStatus(itemId: string, requiredStages: readonly ProcessingStage[]): Promise<ItemProcessingStatus>;
   recoverExpiredLeases(now: string): Promise<number>;
+  setLongTranscriptionOverride(itemId: string, enabled: boolean): Promise<void>;
+  hasLongTranscriptionOverride(itemId: string): Promise<boolean>;
   recordActivity(event: ActivityEvent): Promise<boolean>;
   setActivityEnabled(enabled: boolean): Promise<void>;
   isActivityEnabled(): Promise<boolean>;

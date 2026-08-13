@@ -28,7 +28,7 @@ export interface AcquiredTranscript {
 export class TranscriptFallbackPipeline {
   constructor(private readonly options: TranscriptFallbackOptions) {}
 
-  async acquire(url: string, requestedLanguage?: string, signal?: AbortSignal): Promise<AcquiredTranscript> {
+  async acquire(url: string, requestedLanguage?: string, signal?: AbortSignal, allowLongTranscription = false): Promise<AcquiredTranscript> {
     try {
       const captions = await this.options.captionProvider.acquire(url, requestedLanguage);
       const artifactPath = await persistTranscriptArtifact(this.options.contentRoot, captions.transcript);
@@ -39,7 +39,7 @@ export class TranscriptFallbackPipeline {
 
     const metadataOnly = await this.options.captionProvider.acquireMetadata(url);
     const maxDurationMs = this.options.maxLocalDurationMs ?? 2 * 60 * 60_000;
-    if (metadataOnly.durationMs > maxDurationMs) {
+    if (!allowLongTranscription && metadataOnly.durationMs > maxDurationMs) {
       throw new TranscriptAcquisitionError('captions_unavailable', `Local transcription is limited to ${Math.round(maxDurationMs / 60000)} minutes for this item.`, false, 'Use the explicit per-item long-transcription override to continue.');
     }
 

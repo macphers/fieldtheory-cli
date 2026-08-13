@@ -11,7 +11,7 @@ import {
 } from '../src/jobs/state-machine.js';
 
 const states: JobState[] = ['queued', 'running', 'retry_wait', 'succeeded', 'failed', 'blocked', 'cancelled', 'interrupted'];
-const legal = new Set(['queued:running', 'running:succeeded', 'running:retry_wait', 'running:failed', 'running:blocked', 'running:cancelled', 'running:interrupted', 'retry_wait:queued', 'failed:queued', 'blocked:queued', 'cancelled:queued', 'interrupted:queued']);
+const legal = new Set(['queued:running', 'queued:cancelled', 'running:succeeded', 'running:retry_wait', 'running:failed', 'running:blocked', 'running:cancelled', 'running:interrupted', 'retry_wait:queued', 'retry_wait:cancelled', 'failed:queued', 'blocked:queued', 'cancelled:queued', 'interrupted:queued']);
 
 test('defines every legal transition explicitly and rejects every other pair', () => {
   for (const from of states) for (const to of states) {
