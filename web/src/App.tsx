@@ -156,22 +156,41 @@ function EmptyLibrary() {
   return <main className="empty-library"><p className="eyebrow">Your Library</p><h1>Bookmark a YouTube link on X.</h1><p>Field Theory will quietly prepare the transcript, chapters, and a cited reading page here.</p></main>;
 }
 
+export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen: (id: string) => void }) {
+  return <div className="app-shell">
+    <Rail onLibrary={() => undefined} />
+    <main className="library-shell">
+      <header className="library-header"><p className="eyebrow">Your Library</p><h1>Saved understanding</h1><p>Videos discovered from your X bookmarks, prepared quietly in the background.</p></header>
+      <section className="library-list" aria-label="Knowledge pages">
+        {items.map((item) => <button key={item.canonicalId} className="library-item" onClick={() => onOpen(item.canonicalId)}>
+          {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" loading="lazy" /> : <span className="library-placeholder" aria-hidden="true">▶</span>}
+          <span className="library-copy"><strong>{item.title}</strong><span>{item.creator}</span></span>
+          <span className={`library-status status-${item.status}`}>{item.status === 'ready' ? 'Ready' : item.status === 'processing' ? 'Preparing…' : item.status}</span>
+        </button>)}
+      </section>
+    </main>
+  </div>;
+}
+
 export default function App() {
   const [items, setItems] = useState<KnowledgeItem[] | null>(null);
   const [selected, setSelected] = useState<KnowledgeItem | null>(null);
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showLibrary, setShowLibrary] = useState(true);
 
   const loadLibrary = async () => {
-    setSelected(null); setTranscript([]); setError(null);
+    setError(null);
     try {
       const values = await listItems();
       setItems(values);
-      if (values[0]) {
-        const item = await getItem(values[0].canonicalId);
-        setSelected(item);
-        setTranscript(await getTranscript(item.canonicalId));
-      }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  };
+  const openItem = async (id: string) => {
+    setError(null);
+    try {
+      const item = await getItem(id);
+      setSelected(item); setTranscript(await getTranscript(id)); setShowLibrary(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   useEffect(() => { void loadLibrary(); }, []);
@@ -188,8 +207,9 @@ export default function App() {
   if (error) return <main className="empty-library"><p className="eyebrow">Field Theory</p><h1>Couldn’t open the library.</h1><p>{error}</p><button onClick={() => void loadLibrary()}>Try again</button></main>;
   if (items === null) return <main className="empty-library" aria-busy="true"><p>Opening your library…</p></main>;
   if (items.length === 0) return <EmptyLibrary />;
+  if (showLibrary) return <LibraryPage items={items} onOpen={(id) => void openItem(id)} />;
   if (!selected) return <main className="empty-library" aria-busy="true"><p>Preparing the page…</p></main>;
-  return <ItemPage item={selected} transcript={transcript} onLibrary={() => void loadLibrary()} onRefresh={async () => {
+  return <ItemPage item={selected} transcript={transcript} onLibrary={() => { setShowLibrary(true); void loadLibrary(); }} onRefresh={async () => {
     setSelected(await getItem(selected.canonicalId));
     setTranscript(await getTranscript(selected.canonicalId));
   }} />;

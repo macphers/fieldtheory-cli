@@ -33,10 +33,11 @@ import { exportBookmarks } from './md-export.js';
 import { renderViz } from './bookmarks-viz.js';
 import { listBrowserIds } from './browsers.js';
 import { configureHttpProxyFromEnv } from './http-proxy.js';
-import { canonicalLibraryDir, contentDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
+import { canonicalLibraryDir, contentDatabasePath, contentDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
 import { runContentApp } from './content/app.js';
 import { inspectContentDependencies } from './content/doctor.js';
 import { NodeProcessRunner } from './content/process-runner.js';
+import { SqlJsContentRepository } from './content/sqljs-repository.js';
 import { PromptCancelledError, promptText } from './prompt.js';
 import { skillWithFrontmatter, installSkill, uninstallSkill } from './skill.js';
 import { registerCompanionCommands } from './companion-cli.js';
@@ -854,6 +855,23 @@ export function buildCli() {
         if (check.action && detail !== check.action) console.log(`    ${check.action}`);
       }
       if (checks.some((check) => check.state !== 'ready')) process.exitCode = 1;
+    }));
+
+  appCommand
+    .command('report')
+    .description('Summarize private local knowledge-page activity')
+    .option('--json', 'Print machine-readable JSON')
+    .action(safe(async (options) => {
+      const repository = await SqlJsContentRepository.open(contentDatabasePath());
+      try {
+        const report = await repository.activityReport();
+        if (options.json) { console.log(JSON.stringify(report, null, 2)); return; }
+        console.log(`  Local activity: ${report.totalEvents} events across ${report.items.length} items`);
+        console.log(`  Opens ${report.byType.item_opened} · citations ${report.byType.citation_clicked} · notes ${report.byType.note_saved} · questions ${report.byType.question_asked}`);
+        const revisited = report.items.filter((item) => item.opens >= 2);
+        console.log(`  Revisited pages: ${revisited.length}`);
+        for (const item of report.items) console.log(`  - ${item.title}: ${item.opens} opens, ${item.citationClicks} citations, ${item.notes} notes, ${item.questions} questions`);
+      } finally { await repository.close(); }
     }));
 
   // ── sync ────────────────────────────────────────────────────────────────

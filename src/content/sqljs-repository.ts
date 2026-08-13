@@ -11,6 +11,7 @@ import type {
   ItemNote,
   ItemDeletionManifest,
   JobTransitionInput,
+  KnowledgeActivityReport,
   StoredContentItem,
   SummaryRecord,
   SynthesisChunkRecord,
@@ -474,6 +475,25 @@ export class SqlJsContentRepository implements ContentRepository {
 
   async activityCount(): Promise<number> {
     return this.exclusive(() => Number(first(this.db, 'SELECT COUNT(*) AS count FROM activity_events')?.count ?? 0));
+  }
+
+  async activityReport(): Promise<KnowledgeActivityReport> {
+    return this.exclusive(() => {
+      const byType: KnowledgeActivityReport['byType'] = { item_opened: 0, citation_clicked: 0, note_saved: 0, question_asked: 0 };
+      for (const row of rows(this.db, 'SELECT type,COUNT(*) AS count FROM activity_events GROUP BY type')) {
+        const type = String(row.type) as keyof typeof byType;
+        if (Object.hasOwn(byType, type)) byType[type] = Number(row.count);
+      }
+      const items = rows(this.db, `SELECT e.item_id,i.title,
+        SUM(CASE WHEN e.type='item_opened' THEN 1 ELSE 0 END) AS opens,
+        SUM(CASE WHEN e.type='citation_clicked' THEN 1 ELSE 0 END) AS citation_clicks,
+        SUM(CASE WHEN e.type='note_saved' THEN 1 ELSE 0 END) AS notes,
+        SUM(CASE WHEN e.type='question_asked' THEN 1 ELSE 0 END) AS questions,
+        MAX(e.created_at) AS last_activity_at
+        FROM activity_events e JOIN content_items i ON i.id=e.item_id GROUP BY e.item_id,i.title ORDER BY last_activity_at DESC`)
+        .map((row) => ({ itemId: String(row.item_id), title: String(row.title), opens: Number(row.opens), citationClicks: Number(row.citation_clicks), notes: Number(row.notes), questions: Number(row.questions), lastActivityAt: String(row.last_activity_at) }));
+      return { totalEvents: Object.values(byType).reduce((sum, count) => sum + count, 0), byType, items };
+    });
   }
 
   private deletionManifestSync(itemId: string): ItemDeletionManifest | null {

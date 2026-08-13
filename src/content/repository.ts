@@ -80,6 +80,12 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
+export interface KnowledgeActivityReport {
+  totalEvents: number;
+  byType: Record<ActivityEvent['type'], number>;
+  items: Array<{ itemId: string; title: string; opens: number; citationClicks: number; notes: number; questions: number; lastActivityAt: string }>;
+}
+
 export interface ItemDeletionManifest {
   itemId: string;
   title: string;
@@ -133,6 +139,7 @@ export interface ContentRepository {
   isActivityEnabled(): Promise<boolean>;
   clearActivity(): Promise<number>;
   activityCount(): Promise<number>;
+  activityReport(): Promise<KnowledgeActivityReport>;
   deletionManifest(itemId: string): Promise<ItemDeletionManifest | null>;
   deleteItem(itemId: string): Promise<ItemDeletionManifest>;
   checkpoint(): Promise<void>;

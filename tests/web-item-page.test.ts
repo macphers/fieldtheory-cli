@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { formatTimestamp, ItemPage, youtubeEmbedUrl } from '../web/src/App.js';
+import { formatTimestamp, ItemPage, LibraryPage, youtubeEmbedUrl } from '../web/src/App.js';
 import type { KnowledgeItem, TranscriptSegment } from '../web/src/types.js';
 
 const item: KnowledgeItem = {
@@ -43,4 +43,13 @@ test('progressive item states keep source content visible while work is incomple
   assert.match(html, /The transcript will appear here/);
   assert.match(html, /Available when ready/);
   assert.match(html, /disabled=""/);
+});
+
+test('library renders multiple selectable knowledge pages with status', () => {
+  const second = { ...item, canonicalId: 'youtube:abcdefghijk' as const, videoId: 'abcdefghijk', title: 'Another Saved Video', status: 'processing' as const };
+  const html = renderToStaticMarkup(createElement(LibraryPage, { items: [item, second], onOpen: () => {} }));
+  assert.match(html, /Saved understanding/);
+  assert.match(html, /A Redacted Test Conversation/);
+  assert.match(html, /Another Saved Video/);
+  assert.match(html, /Preparing/);
 });

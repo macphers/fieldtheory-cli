@@ -151,9 +151,13 @@ test('activity recording can be disabled and cleared independently', async () =>
   const { repo } = await repository();
   await repo.upsertItem(item);
   assert.equal(await repo.recordActivity({ id: 'event-one', itemId: item.canonicalId, type: 'item_opened', createdAt: NOW }), true);
+  assert.equal(await repo.recordActivity({ id: 'event-citation', itemId: item.canonicalId, type: 'citation_clicked', createdAt: NOW }), true);
+  const report = await repo.activityReport();
+  assert.equal(report.totalEvents, 2);
+  assert.deepEqual({ opens: report.items[0].opens, citations: report.items[0].citationClicks }, { opens: 1, citations: 1 });
   await repo.setActivityEnabled(false);
   assert.equal(await repo.recordActivity({ id: 'event-two', itemId: item.canonicalId, type: 'note_saved', createdAt: NOW }), false);
-  assert.equal(await repo.clearActivity(), 1);
+  assert.equal(await repo.clearActivity(), 2);
   assert.equal(await repo.clearActivity(), 0);
   await repo.close();
 });
