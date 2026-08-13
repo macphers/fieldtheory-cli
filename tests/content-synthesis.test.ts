@@ -94,6 +94,20 @@ test('engine support batch falls back to individual verification when the model 
   assert.equal(responses.length, 0);
 });
 
+test('engine support batch bounds model requests to eight claims', async () => {
+  const responseSizes: number[] = [];
+  const model = new EngineContentModel({ name: 'fixture', config: { bin: 'fixture', args: () => [] } });
+  model.generate = async (prompt) => {
+    const count = (JSON.parse(prompt.slice(prompt.lastIndexOf('\n\n') + 2)) as unknown[]).length;
+    responseSizes.push(count);
+    return JSON.stringify({ statuses: Array.from({ length: count }, () => 'supported') });
+  };
+  const claim = artifact.overview[0];
+  const excerpts = artifact.transcript.segments.slice(0, 2);
+  assert.equal((await model.checkSupportBatch(Array.from({ length: 17 }, () => ({ claim, excerpts })))).length, 17);
+  assert.deepEqual(responseSizes, [8, 8, 1]);
+});
+
 test('synthesis rejects fabricated citations and unsupported overview output', async () => {
   const invalidCitation = new SynthesisPipeline({ model: { provider: 'fixture', generate: async () => JSON.stringify({
     overview: Array.from({ length: 3 }, () => ({ text: 'Fabricated.', citations: [{ startMs: 500000, endMs: 510000 }] })), details: [],
