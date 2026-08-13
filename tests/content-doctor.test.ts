@@ -16,12 +16,16 @@ class DoctorRunner implements ProcessRunner {
 test('reports ready tools and an explicitly installed model', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-doctor-'));
   const model = path.join(root, 'model.bin');
+  const cache = path.join(root, 'bookmarks.jsonl');
   await writeFile(model, 'fixture');
+  await writeFile(cache, '');
   const checks = await inspectContentDependencies({
     runner: new DoctorRunner(), contentRoot: path.join(root, 'content'), platform: 'darwin', arch: 'arm64',
     env: { FT_YTDLP_PATH: 'yt-dlp', FT_FFMPEG_PATH: 'ffmpeg', FT_WHISPER_CPP_PATH: 'whisper-cli', FT_WHISPER_MODEL: model },
+    availableEngines: ['codex'], bookmarksCachePath: cache,
   });
-  assert.deepEqual(checks.map((check) => check.state), ['ready', 'ready', 'ready', 'ready', 'ready']);
+  assert.equal(checks.length, 10);
+  assert.ok(checks.every((check) => check.state === 'ready'));
 });
 
 test('reports missing dependencies and unsupported Mac architecture with corrective actions', async () => {
@@ -29,6 +33,7 @@ test('reports missing dependencies and unsupported Mac architecture with correct
   const checks = await inspectContentDependencies({
     runner: new DoctorRunner(), contentRoot: path.join(root, 'content'), platform: 'darwin', arch: 'x64',
     env: { FT_YTDLP_PATH: 'missing', FT_FFMPEG_PATH: 'ffmpeg', FT_WHISPER_CPP_PATH: 'whisper-cli' },
+    availableEngines: [], bookmarksCachePath: path.join(root, 'missing-bookmarks.jsonl'),
   });
   assert.equal(checks.find((check) => check.name === 'yt-dlp')?.state, 'missing');
   assert.equal(checks.find((check) => check.name === 'whisper.cpp')?.state, 'unsupported');

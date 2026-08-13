@@ -108,6 +108,12 @@ export class ContentOrchestrator {
             checkSupport: this.options.model.checkSupport.bind(this.options.model),
             ...(this.options.model.repairClaim ? { repairClaim: this.options.model.repairClaim.bind(this.options.model) } : {}),
             now: this.now,
+            loadChunk: async (artifactId) => (await this.options.repository.getSynthesisChunk(artifactId))?.draft ?? null,
+            saveChunk: async (artifactId, chunk, draft, artifactHash, createdAt) => this.options.repository.saveSynthesisChunk({
+              artifactId, itemId: job.itemId, transcriptContentHash: transcript.transcript.contentHash, chunkId: chunk.id,
+              provider: this.options.model!.provider, ...(this.options.model!.model ? { model: this.options.model!.model } : {}),
+              promptVersion: 1, draft, artifactHash, createdAt,
+            }),
           });
           const synthesis = await pipeline.synthesize(transcript.transcript, chapterRecord.chapters, signal);
           await this.options.repository.saveSummary({ itemId: job.itemId, transcriptContentHash: synthesis.transcriptContentHash, chaptersArtifactHash: chapterRecord.artifactHash, overview: synthesis.overview, details: synthesis.details, provider: synthesis.provider, ...(synthesis.model ? { model: synthesis.model } : {}), promptVersion: synthesis.promptVersion, artifactHash: synthesis.artifactHash, validationState: 'supported', createdAt: synthesis.createdAt, promotedAt: synthesis.createdAt });

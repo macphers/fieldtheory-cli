@@ -69,3 +69,30 @@ test('synthesis enforces a pre-dispatch input ceiling', async () => {
   await assert.rejects(pipeline.synthesize(artifact.transcript), /character ceiling/);
   assert.equal(called, false);
 });
+
+test('long synthesis resumes from independently persisted chunk drafts after provider failure', async () => {
+  const transcript = normalizeTranscript('en', { provider: 'fixture', source: 'creator-captions' }, Array.from({ length: 25 }, (_, index) => ({
+    startMs: index * 60_000,
+    endMs: (index + 1) * 60_000,
+    text: `Segment ${index} contains distinct evidence for resumable synthesis testing.`,
+  })));
+  const cache = new Map<string, ReturnType<typeof JSON.parse>>();
+  let calls = 0;
+  let failOnce = true;
+  const pipeline = new SynthesisPipeline({
+    model: { provider: 'fixture', generate: async () => {
+      calls += 1;
+      if (failOnce && calls === 2) { failOnce = false; throw new Error('provider unavailable'); }
+      return draft();
+    } },
+    checkSupport: async () => 'supported',
+    loadChunk: async (id) => cache.get(id) ?? null,
+    saveChunk: async (id, _chunk, value) => { cache.set(id, value); },
+  });
+  await assert.rejects(pipeline.synthesize(transcript), /provider unavailable/);
+  assert.equal(cache.size, 1);
+  const result = await pipeline.synthesize(transcript);
+  assert.equal(result.overview.length, 3);
+  assert.equal(cache.size, 3);
+  assert.equal(calls, 5);
+});

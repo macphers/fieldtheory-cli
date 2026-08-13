@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto';
 import type { BookmarkRecord } from '../types.js';
 import { readJsonLines } from '../fs.js';
 import { syncBookmarksGraphQL } from '../graphql-bookmarks.js';
-import { resolveEngine } from '../engine.js';
+import { detectAvailableEngines, resolveEngine } from '../engine.js';
 import { contentDatabasePath, contentDir, contentTempDir, twitterBookmarksCachePath } from '../paths.js';
+import { loadPreferences } from '../preferences.js';
 import { DurableJobWorker } from '../jobs/worker.js';
 import { GroundedChatService } from './chat/service.js';
 import { EngineContentModel } from './engine-model.js';
@@ -15,6 +16,7 @@ import { TranscriptFallbackPipeline } from './transcripts/fallback.js';
 import { WhisperCppTranscriptProvider } from './transcripts/whisper-cpp.js';
 import { YtDlpTranscriptProvider } from './transcripts/yt-dlp.js';
 import { startContentServer, type RunningContentServer } from '../server/http.js';
+import { cleanupOrphanedTempFiles } from './temp-cleanup.js';
 
 export interface ContentAppOptions {
   engine?: string;
@@ -43,7 +45,12 @@ export function openSystemBrowser(url: string, platform: NodeJS.Platform = proce
 
 async function optionalModel(engine: string | undefined, onStatus: (message: string) => void): Promise<EngineContentModel | undefined> {
   try {
-    return new EngineContentModel(await resolveEngine(engine ? { override: engine } : {}));
+    if (engine) return new EngineContentModel(await resolveEngine({ override: engine }));
+    const available = detectAvailableEngines();
+    const saved = loadPreferences().defaultEngine;
+    const selected = saved && available.includes(saved) ? saved : available[0];
+    if (!selected) throw new Error('No supported LLM CLI found.');
+    return new EngineContentModel(await resolveEngine({ override: selected }));
   } catch (error) {
     if (engine) throw error;
     onStatus(`Model unavailable; transcripts remain usable (${error instanceof Error ? error.message.split('\n')[0] : String(error)}).`);
@@ -64,6 +71,8 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
   let closing = false;
 
   try {
+    const cleanup = await cleanupOrphanedTempFiles(contentTempDir());
+    if (cleanup.removed > 0) onStatus(`Removed ${cleanup.removed} stale temporary transcription artifact${cleanup.removed === 1 ? '' : 's'}.`);
     const model = await optionalModel(options.engine, onStatus);
     const ytDlpBinary = env.FT_YTDLP_PATH ?? 'yt-dlp';
     const captionProvider = new YtDlpTranscriptProvider({ runner, binary: ytDlpBinary });

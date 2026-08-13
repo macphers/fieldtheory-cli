@@ -45,6 +45,8 @@ export interface SynthesisPipelineOptions {
   promptVersion?: number;
   maxInputChars?: number;
   now?: () => Date;
+  loadChunk?(artifactId: string): Promise<SynthesisDraft | null>;
+  saveChunk?(artifactId: string, chunk: TranscriptChunk, draft: SynthesisDraft, artifactHash: string, createdAt: string): Promise<void>;
 }
 
 function hash(value: unknown): string {
@@ -167,8 +169,21 @@ export class SynthesisPipeline {
     const estimatedInput = chunks.reduce((total, chunk) => total + transcriptText(chunk.segments).length, 0);
     if (estimatedInput > maxInputChars) throw new Error(`Synthesis input exceeds the configured ${maxInputChars}-character ceiling.`);
 
+    const promptVersion = this.options.promptVersion ?? 1;
+    const createdAt = (this.options.now ?? (() => new Date()))().toISOString();
     const chunkDrafts: SynthesisDraft[] = [];
-    for (const chunk of chunks) chunkDrafts.push(parseSynthesisDraft(await this.options.model.generate(chunkPrompt(chunk), signal)));
+    for (const chunk of chunks) {
+      const artifactId = hash({ chunkId: chunk.id, promptVersion, provider: this.options.model.provider, model: this.options.model.model ?? null });
+      const cached = await this.options.loadChunk?.(artifactId);
+      if (cached) {
+        chunkDrafts.push(cached);
+        continue;
+      }
+      const draft = parseSynthesisDraft(await this.options.model.generate(chunkPrompt(chunk), signal));
+      const artifactHash = hash({ artifactId, draft });
+      await this.options.saveChunk?.(artifactId, chunk, draft, artifactHash, createdAt);
+      chunkDrafts.push(draft);
+    }
     const draft = chunks.length === 1 ? chunkDrafts[0] : parseSynthesisDraft(await this.options.model.generate(reductionPrompt(chunkDrafts), signal));
     if (draft.overview.length < 3 || draft.overview.length > 5) throw new Error('Synthesis overview must contain 3 to 5 claims.');
 
@@ -178,8 +193,6 @@ export class SynthesisPipeline {
     const details = await supportValidatedClaims(structuralDetails, transcript, this.options, signal);
     if (overview.length < 3) throw new Error('Fewer than three supported overview claims remain after validation.');
 
-    const promptVersion = this.options.promptVersion ?? 1;
-    const createdAt = (this.options.now ?? (() => new Date()))().toISOString();
     const normalized = { overview, details, chapters: draft.chapters ?? chapters };
     return {
       ...normalized,

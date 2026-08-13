@@ -1,4 +1,4 @@
-import type { DiscoveredContentItem, KnowledgeClaim, RawChapter, TranscriptArtifact } from './types.js';
+import type { DiscoveredContentItem, KnowledgeClaim, KnowledgeClaimInput, RawChapter, TranscriptArtifact } from './types.js';
 import type { ItemProcessingStatus, JobState, ProcessingJobSnapshot, ProcessingStage } from '../jobs/state-machine.js';
 
 export interface StoredContentItem extends DiscoveredContentItem {
@@ -51,6 +51,19 @@ export interface SummaryRecord {
   promotedAt: string;
 }
 
+export interface SynthesisChunkRecord {
+  artifactId: string;
+  itemId: string;
+  transcriptContentHash: string;
+  chunkId: string;
+  provider: string;
+  model?: string;
+  promptVersion: number;
+  draft: { overview: KnowledgeClaimInput[]; details: KnowledgeClaimInput[]; chapters?: RawChapter[] };
+  artifactHash: string;
+  createdAt: string;
+}
+
 export interface ItemNote {
   itemId: string;
   markdown: string;
@@ -100,6 +113,8 @@ export interface ContentRepository {
   getChapters(itemId: string): Promise<ChapterRecord | null>;
   saveSummary(record: SummaryRecord): Promise<void>;
   getSummary(itemId: string): Promise<SummaryRecord | null>;
+  getSynthesisChunk(artifactId: string): Promise<SynthesisChunkRecord | null>;
+  saveSynthesisChunk(record: SynthesisChunkRecord): Promise<void>;
   putNote(itemId: string, markdown: string, expectedVersion: number | null, now: string): Promise<ItemNote>;
   getNote(itemId: string): Promise<ItemNote | null>;
   enqueueJob(itemId: string, stage: ProcessingStage, inputFingerprint: string, implementationVersion: number, now: string): Promise<ProcessingJobSnapshot>;

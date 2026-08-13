@@ -452,7 +452,6 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
       reject(signal?.reason ?? new Error('Sync interrupted.'));
     };
     signal?.addEventListener('abort', abort, { once: true });
-    timer.unref();
   });
 }
 
@@ -729,6 +728,10 @@ export async function syncBookmarksGraphQL(
 
     if (page % checkpointEvery === 0) await writeJsonLines(cachePath, existing);
 
+    if (options.signal?.aborted) {
+      stopReason = 'interrupted';
+      break;
+    }
     if (page < maxPages) await abortableDelay(delayMs, options.signal);
   }
 
@@ -812,6 +815,10 @@ export async function syncBookmarksGraphQL(
 
       if (page % checkpointEvery === 0) await writeJsonLines(cachePath, existing);
 
+      if (options.signal?.aborted) {
+        stopReason = 'interrupted';
+        break;
+      }
       if (page < maxPages) await abortableDelay(delayMs, options.signal);
     }
 

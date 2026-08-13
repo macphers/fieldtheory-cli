@@ -13,6 +13,7 @@ import type {
   JobTransitionInput,
   StoredContentItem,
   SummaryRecord,
+  SynthesisChunkRecord,
   TranscriptRecord,
   TranscriptSearchHit,
 } from './repository.js';
@@ -93,6 +94,11 @@ function initializeSchema(db: Database): void {
     transcript_content_hash TEXT NOT NULL, chapters_artifact_hash TEXT, overview_json TEXT NOT NULL,
     details_json TEXT NOT NULL, provider TEXT NOT NULL, model TEXT, prompt_version INTEGER NOT NULL,
     artifact_hash TEXT NOT NULL, validation_state TEXT NOT NULL, created_at TEXT NOT NULL, promoted_at TEXT
+  )`);
+  db.run(`CREATE TABLE IF NOT EXISTS synthesis_chunks (
+    artifact_id TEXT PRIMARY KEY, item_id TEXT NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
+    transcript_content_hash TEXT NOT NULL, chunk_id TEXT NOT NULL, provider TEXT NOT NULL, model TEXT,
+    prompt_version INTEGER NOT NULL, draft_json TEXT NOT NULL, artifact_hash TEXT NOT NULL, created_at TEXT NOT NULL
   )`);
   db.run(`CREATE TABLE IF NOT EXISTS notes (
     item_id TEXT PRIMARY KEY REFERENCES content_items(id) ON DELETE CASCADE, markdown TEXT NOT NULL,
@@ -303,6 +309,26 @@ export class SqlJsContentRepository implements ContentRepository {
         promotedAt: String(row.promoted_at),
       };
     });
+  }
+
+  async getSynthesisChunk(artifactId: string): Promise<SynthesisChunkRecord | null> {
+    return this.exclusive(() => {
+      const row = first(this.db, 'SELECT * FROM synthesis_chunks WHERE artifact_id=?', [artifactId]);
+      if (!row) return null;
+      return {
+        artifactId, itemId: String(row.item_id), transcriptContentHash: String(row.transcript_content_hash),
+        chunkId: String(row.chunk_id), provider: String(row.provider),
+        ...(row.model ? { model: String(row.model) } : {}), promptVersion: Number(row.prompt_version),
+        draft: JSON.parse(String(row.draft_json)), artifactHash: String(row.artifact_hash), createdAt: String(row.created_at),
+      };
+    });
+  }
+
+  async saveSynthesisChunk(record: SynthesisChunkRecord): Promise<void> {
+    return this.exclusive(() => this.transaction(() => {
+      this.db.run(`INSERT OR IGNORE INTO synthesis_chunks(artifact_id,item_id,transcript_content_hash,chunk_id,provider,model,prompt_version,draft_json,artifact_hash,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`, [record.artifactId, record.itemId, record.transcriptContentHash, record.chunkId, record.provider, record.model ?? null, record.promptVersion, JSON.stringify(record.draft), record.artifactHash, record.createdAt]);
+    }));
   }
 
   async putNote(itemId: string, markdown: string, expectedVersion: number | null, now: string): Promise<ItemNote> {
