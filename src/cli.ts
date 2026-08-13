@@ -35,6 +35,7 @@ import { listBrowserIds } from './browsers.js';
 import { configureHttpProxyFromEnv } from './http-proxy.js';
 import { canonicalLibraryDir, contentDatabasePath, contentDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
 import { runContentApp } from './content/app.js';
+import { loadClaimReviewPacket } from './content/review.js';
 import { inspectContentDependencies } from './content/doctor.js';
 import { NodeProcessRunner } from './content/process-runner.js';
 import { SqlJsContentRepository } from './content/sqljs-repository.js';
@@ -868,9 +869,24 @@ export function buildCli() {
         if (options.json) { console.log(JSON.stringify(report, null, 2)); return; }
         console.log(`  Local activity: ${report.totalEvents} events across ${report.items.length} items`);
         console.log(`  Opens ${report.byType.item_opened} · citations ${report.byType.citation_clicked} · notes ${report.byType.note_saved} · questions ${report.byType.question_asked}`);
-        const revisited = report.items.filter((item) => item.opens >= 2);
-        console.log(`  Revisited pages: ${revisited.length}`);
+        console.log(`  Habit trial: ${report.habitTrial.met ? 'passed' : 'in progress'} — ${report.habitTrial.spanDays}/7 days, ${report.habitTrial.revisitedPages}/3 revisited pages`);
         for (const item of report.items) console.log(`  - ${item.title}: ${item.opens} opens, ${item.citationClicks} citations, ${item.notes} notes, ${item.questions} questions`);
+      } finally { await repository.close(); }
+    }));
+
+  appCommand
+    .command('review')
+    .description('Create a private claim-by-claim review packet with cited excerpts')
+    .option('-o, --output <path>', 'Write a new private Markdown file instead of printing to stdout')
+    .action(safe(async (options) => {
+      const repository = await SqlJsContentRepository.open(contentDatabasePath());
+      try {
+        const packet = await loadClaimReviewPacket(repository);
+        if (!options.output) { process.stdout.write(packet); return; }
+        const outputPath = path.resolve(String(options.output));
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, packet, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        console.log(`  Review packet: ${outputPath}`);
       } finally { await repository.close(); }
     }));
 

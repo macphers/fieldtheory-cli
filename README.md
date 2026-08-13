@@ -64,6 +64,15 @@ ft app doctor
 
 Field Theory never downloads a Whisper model silently. Use `ft app --no-sync` to process the existing bookmark cache or `ft app --no-open` to print the one-time authenticated local URL. `SIGINT`/`SIGTERM` checkpoints work and safely resumes interrupted jobs on the next launch.
 
+For the private quality and habit trial, generate a claim-by-claim packet and check progress locally:
+
+```bash
+ft app review --output ~/knowledge-pages-claim-review.md
+ft app report
+```
+
+The review packet includes every overview/detail claim, quoted transcript evidence, timestamped source links, and verdict checkboxes. The report marks the seven-day, three-revisited-page habit gate explicitly. Review output is created owner-only and will not overwrite an existing file.
+
 ## Commands
 
 ### Sync
@@ -150,6 +159,7 @@ Field Theory never downloads a Whisper model silently. Use `ft app --no-sync` to
 | `ft app` | Run the private local knowledge library, sync bookmarks, and process linked YouTube videos |
 | `ft app doctor` | Check X cache access, media tools, model setup, disk, temp cleanup, and loopback security |
 | `ft app report` | Summarize private local opens, citation clicks, notes, questions, and revisited pages |
+| `ft app review [--output <path>]` | Create a private claim-review packet with exact cited transcript excerpts |
 
 `ft library open` targets the packaged Field Theory app by bundle id (`com.fieldtheory.app`) instead of trusting the system-wide `fieldtheory://` handler. That avoids accidentally opening a generic Electron development app when another checkout registered the same URL scheme.
 

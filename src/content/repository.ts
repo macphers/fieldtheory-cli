@@ -84,6 +84,16 @@ export interface KnowledgeActivityReport {
   totalEvents: number;
   byType: Record<ActivityEvent['type'], number>;
   items: Array<{ itemId: string; title: string; opens: number; citationClicks: number; notes: number; questions: number; lastActivityAt: string }>;
+  habitTrial: {
+    firstActivityAt: string | null;
+    lastActivityAt: string | null;
+    spanDays: number;
+    activeDays: number;
+    revisitedPages: number;
+    requiredSpanDays: 7;
+    requiredRevisitedPages: 3;
+    met: boolean;
+  };
 }
 
 export interface ItemDeletionManifest {

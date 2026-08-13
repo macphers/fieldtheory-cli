@@ -155,10 +155,42 @@ test('activity recording can be disabled and cleared independently', async () =>
   const report = await repo.activityReport();
   assert.equal(report.totalEvents, 2);
   assert.deepEqual({ opens: report.items[0].opens, citations: report.items[0].citationClicks }, { opens: 1, citations: 1 });
+  assert.deepEqual({ span: report.habitTrial.spanDays, active: report.habitTrial.activeDays, revisited: report.habitTrial.revisitedPages, met: report.habitTrial.met }, { span: 1, active: 1, revisited: 0, met: false });
   await repo.setActivityEnabled(false);
   assert.equal(await repo.recordActivity({ id: 'event-two', itemId: item.canonicalId, type: 'note_saved', createdAt: NOW }), false);
   assert.equal(await repo.clearActivity(), 2);
   assert.equal(await repo.clearActivity(), 0);
+  await repo.close();
+});
+
+test('activity report marks the seven-day three-page habit gate explicitly', async () => {
+  const { item } = domainFixture();
+  const { repo } = await repository();
+  for (let index = 0; index < 3; index += 1) {
+    const videoId = `trial-video-${index}`;
+    const trialItem = {
+      ...item,
+      canonicalId: `youtube:${videoId}` as const,
+      videoId,
+      canonicalUrl: `https://www.youtube.com/watch?v=${videoId}`,
+      title: `Trial item ${index + 1}`,
+      sourceRefs: item.sourceRefs.map((source) => ({ ...source, bookmarkId: `trial-bookmark-${index}` })),
+    };
+    await repo.upsertItem(trialItem);
+    await repo.recordActivity({ id: `open-${index}-first`, itemId: trialItem.canonicalId, type: 'item_opened', createdAt: '2026-08-01T12:00:00.000Z' });
+    await repo.recordActivity({ id: `open-${index}-return`, itemId: trialItem.canonicalId, type: 'item_opened', createdAt: '2026-08-07T12:00:00.000Z' });
+  }
+  const report = await repo.activityReport();
+  assert.deepEqual(report.habitTrial, {
+    firstActivityAt: '2026-08-01T12:00:00.000Z',
+    lastActivityAt: '2026-08-07T12:00:00.000Z',
+    spanDays: 7,
+    activeDays: 2,
+    revisitedPages: 3,
+    requiredSpanDays: 7,
+    requiredRevisitedPages: 3,
+    met: true,
+  });
   await repo.close();
 });
 

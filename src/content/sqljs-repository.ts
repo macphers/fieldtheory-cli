@@ -492,7 +492,24 @@ export class SqlJsContentRepository implements ContentRepository {
         MAX(e.created_at) AS last_activity_at
         FROM activity_events e JOIN content_items i ON i.id=e.item_id GROUP BY e.item_id,i.title ORDER BY last_activity_at DESC`)
         .map((row) => ({ itemId: String(row.item_id), title: String(row.title), opens: Number(row.opens), citationClicks: Number(row.citation_clicks), notes: Number(row.notes), questions: Number(row.questions), lastActivityAt: String(row.last_activity_at) }));
-      return { totalEvents: Object.values(byType).reduce((sum, count) => sum + count, 0), byType, items };
+      const bounds = first(this.db, `SELECT MIN(created_at) AS first_activity_at,MAX(created_at) AS last_activity_at,COUNT(DISTINCT substr(created_at,1,10)) AS active_days FROM activity_events`);
+      const firstActivityAt = bounds?.first_activity_at ? String(bounds.first_activity_at) : null;
+      const lastActivityAt = bounds?.last_activity_at ? String(bounds.last_activity_at) : null;
+      const spanDays = firstActivityAt && lastActivityAt
+        ? Math.floor((Date.parse(lastActivityAt) - Date.parse(firstActivityAt)) / 86_400_000) + 1
+        : 0;
+      const revisitedPages = items.filter((item) => item.opens >= 2).length;
+      const habitTrial: KnowledgeActivityReport['habitTrial'] = {
+        firstActivityAt,
+        lastActivityAt,
+        spanDays,
+        activeDays: Number(bounds?.active_days ?? 0),
+        revisitedPages,
+        requiredSpanDays: 7,
+        requiredRevisitedPages: 3,
+        met: spanDays >= 7 && revisitedPages >= 3,
+      };
+      return { totalEvents: Object.values(byType).reduce((sum, count) => sum + count, 0), byType, items, habitTrial };
     });
   }
 
