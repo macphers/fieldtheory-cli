@@ -12,6 +12,10 @@
     "build:server": "tsc -p tsconfig.json",
     "build:web": "tsc -p web/tsconfig.json && vite build",
     "dev:web": "vite",
+    "preview:web": "vite preview --host 127.0.0.1 --port 4173 --strictPort",
+    "check:docs": "node scripts/check-docs-inventory.mjs",
+    "test:browser": "npm run build:web && playwright test",
+    "test:browser:run": "playwright test",
     "test": "tsx --test tests/**/*.test.ts",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
@@ -60,6 +64,7 @@
     "undici": "^6.25.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
