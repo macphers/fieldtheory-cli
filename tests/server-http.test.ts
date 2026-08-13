@@ -9,7 +9,7 @@ import { SqlJsContentRepository } from '../src/content/sqljs-repository.js';
 import type { StoredContentItem } from '../src/content/repository.js';
 import { startContentServer } from '../src/server/http.js';
 
-async function setup() {
+async function setup(chat?: Parameters<typeof startContentServer>[0]['chat']) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-server-'));
   const repository = await SqlJsContentRepository.open(path.join(dir, 'content.sqlite'));
   const artifact = buildKnowledgePageArtifact(structuredClone(fixture) as KnowledgePageFixtureInput);
@@ -19,7 +19,7 @@ async function setup() {
   const job = await repository.enqueueJob(item.canonicalId, 'summary', 'summary-input', 1, '2026-08-12T20:00:00.000Z');
   await repository.leaseNextJob('worker', '2026-08-12T20:00:00.000Z');
   await repository.transitionJob(job.id, { state: 'failed', now: '2026-08-12T20:00:01.000Z', errorCode: 'provider_unavailable' });
-  const server = await startContentServer({ repository, now: () => Date.parse('2026-08-12T20:00:02.000Z') });
+  const server = await startContentServer({ repository, chat, now: () => Date.parse('2026-08-12T20:00:02.000Z') });
   return { repository, server, item, job };
 }
 
@@ -103,6 +103,21 @@ test('activity controls stop future writes without clearing existing events', as
     const ignored = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/activity`, { method: 'POST', headers, body: JSON.stringify({ id: 'event-2', type: 'note_saved' }) });
     assert.deepEqual(await ignored.json(), { recorded: false });
     assert.equal(await repository.clearActivity(), 1);
+  } finally { await server.close(); await repository.close(); }
+});
+
+test('chat endpoint validates questions and returns cited session-scoped answers', async () => {
+  const { repository, server, item } = await setup({ answer: async (_itemId, question) => ({ answer: `Grounded: ${question}`, citations: [{ segmentId: 'segment', startMs: 60000, endMs: 120000 }], refused: false }) });
+  try {
+    const { cookie, csrf } = await authenticate(server);
+    const headers = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
+    const response = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/chat`, { method: 'POST', headers, body: JSON.stringify({ question: 'What is the mechanism?' }) });
+    assert.equal(response.status, 200);
+    const answer = await response.json() as { answer: string; citations: unknown[] };
+    assert.match(answer.answer, /mechanism/);
+    assert.equal(answer.citations.length, 1);
+    const invalid = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/chat`, { method: 'POST', headers, body: JSON.stringify({ question: '' }) });
+    assert.equal(invalid.status, 400);
   } finally { await server.close(); await repository.close(); }
 });
 

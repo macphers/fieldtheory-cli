@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getItem, getTranscript, listItems, recordActivity, saveNote } from './api';
-import type { KnowledgeItem, TranscriptSegment } from './types';
+import { askItem, getItem, getTranscript, listItems, recordActivity, saveNote } from './api';
+import type { ChatAnswer, KnowledgeItem, TranscriptSegment } from './types';
 
 export function formatTimestamp(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -51,6 +51,9 @@ export function ItemPage({ item, transcript, onLibrary }: { item: KnowledgeItem;
   const [noteVersion, setNoteVersion] = useState<number | null>(item.note?.version ?? 0);
   const [noteState, setNoteState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [embedFailed, setEmbedFailed] = useState(false);
+  const [question, setQuestion] = useState('');
+  const [chat, setChat] = useState<ChatAnswer | null>(null);
+  const [chatState, setChatState] = useState<'idle' | 'asking' | 'error'>('idle');
   const player = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => { trackActivity(item.canonicalId, 'item_opened'); }, [item.canonicalId]);
@@ -67,6 +70,18 @@ export function ItemPage({ item, transcript, onLibrary }: { item: KnowledgeItem;
       setNoteState('saved');
       trackActivity(item.canonicalId, 'note_saved');
     } catch { setNoteState('error'); }
+  };
+  const ask = async () => {
+    const value = question.trim();
+    if (!value || chatState === 'asking') return;
+    setChatState('asking');
+    try {
+      setChat(await askItem(item.canonicalId, value));
+      setQuestion('');
+      setChatState('idle');
+    } catch {
+      setChatState('error');
+    }
   };
 
   return <div className="app-shell">
@@ -105,12 +120,13 @@ export function ItemPage({ item, transcript, onLibrary }: { item: KnowledgeItem;
 
         {item.overview?.length ? <section className="synthesis"><h2>Overview</h2><ul>{item.overview.map((claim, index) => <li key={index}>{claim.text} {claim.citations.map((citation) => <TimestampButton key={citation.startMs} milliseconds={citation.startMs} onSeek={seek} />)}</li>)}</ul></section> : null}
         {item.details?.length ? <section className="synthesis"><h2>Details</h2>{item.details.map((claim, index) => <p key={index}>{claim.text} {claim.citations.map((citation) => <TimestampButton key={citation.startMs} milliseconds={citation.startMs} onSeek={seek} />)}</p>)}</section> : null}
+        {chat ? <section className={`chat-answer ${chat.refused ? 'chat-refused' : ''}`} aria-live="polite"><p className="eyebrow">Answer</p><p>{chat.answer}</p>{chat.citations.length ? <div className="chat-citations">{chat.citations.map((citation) => <TimestampButton key={citation.segmentId} milliseconds={citation.startMs} onSeek={seek} />)}</div> : null}</section> : null}
       </article>
-      <form className="composer" onSubmit={(event) => event.preventDefault()}>
+      <form className="composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
         <label className="sr-only" htmlFor="question">Ask about this video</label>
-        <input id="question" placeholder="Ask anything about this video…" disabled={item.status !== 'ready'} />
-        <span>{item.status === 'ready' ? 'Grounded in transcript' : 'Available when ready'}</span>
-        <button type="submit" disabled={item.status !== 'ready'} aria-label="Ask">↑</button>
+        <input id="question" value={question} onChange={(event) => { setQuestion(event.target.value); setChatState('idle'); }} placeholder={chatState === 'error' ? 'Could not answer. Try again…' : 'Ask anything about this video…'} disabled={item.status !== 'ready' || chatState === 'asking'} maxLength={2000} />
+        <span>{item.status === 'ready' ? chatState === 'asking' ? 'Reading transcript…' : 'Grounded in transcript' : 'Available when ready'}</span>
+        <button type="submit" disabled={item.status !== 'ready' || chatState === 'asking' || !question.trim()} aria-label="Ask">↑</button>
       </form>
     </main>
   </div>;

@@ -65,6 +65,20 @@ test('notes use optimistic versions and survive unrelated processing updates', a
   await repo.close();
 });
 
+test('promotes only chapters and summaries grounded in the current transcript', async () => {
+  const { item, transcript } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: transcript.contentHash, artifactPath: '/fixture.json', transcript, acquiredAt: NOW });
+  const page = buildKnowledgePageArtifact(structuredClone(fixture) as KnowledgePageFixtureInput);
+  await repo.replaceChapters({ itemId: item.canonicalId, transcriptContentHash: transcript.contentHash, artifactHash: 'chapters-hash', chapters: page.chapters, generation: { provider: 'fixture' } });
+  await repo.saveSummary({ itemId: item.canonicalId, transcriptContentHash: transcript.contentHash, chaptersArtifactHash: 'chapters-hash', overview: page.overview, details: page.details, provider: 'fixture', promptVersion: 1, artifactHash: 'summary-hash', validationState: 'supported', createdAt: NOW, promotedAt: NOW });
+  assert.equal((await repo.getChapters(item.canonicalId))?.chapters.length, page.chapters.length);
+  assert.equal((await repo.getSummary(item.canonicalId))?.overview.length, page.overview.length);
+  await assert.rejects(repo.saveSummary({ itemId: item.canonicalId, transcriptContentHash: 'stale', overview: page.overview, details: page.details, provider: 'fixture', promptVersion: 1, artifactHash: 'stale-summary', validationState: 'supported', createdAt: NOW, promotedAt: NOW }), /current transcript/);
+  await repo.close();
+});
+
 test('checkpoint failures report the I/O error and fail the repository closed', async () => {
   const { item } = domainFixture();
   const { dir, repo } = await repository();

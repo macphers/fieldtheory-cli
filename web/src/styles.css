@@ -59,6 +59,11 @@ a { color: inherit; }
 .synthesis h2 { margin-top: 32px; }
 .synthesis li { padding-left: 4px; margin-bottom: 10px; }
 .timestamp { border: 0; border-radius: 999px; background: #e4e5d8; color: #6b6e5f; padding: 2px 7px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+.chat-answer { margin: 38px 0 6px; padding: 20px 22px; border-left: 2px solid #a9ad91; background: rgba(232,233,220,.45); line-height: 1.65; }
+.chat-answer .eyebrow { margin: 0 0 6px; color: #7a7d6b; text-transform: uppercase; letter-spacing: .1em; font-size: 11px; font-weight: 750; }
+.chat-answer > p:last-of-type { margin: 0; }
+.chat-refused { border-left-color: #aaa89f; background: rgba(235,234,228,.55); }
+.chat-citations { display: flex; gap: 6px; margin-top: 12px; }
 
 .composer { position: fixed; left: calc(72px + max(34px, (100vw - 72px - 780px) / 2)); bottom: 22px; width: min(calc(100vw - 72px - 68px), 780px); display: flex; align-items: center; gap: 14px; border: 1px solid #deddd5; border-radius: 999px; background: rgba(250,249,245,.94); box-shadow: 0 12px 36px rgba(42,43,37,.09); padding: 8px 10px 8px 20px; backdrop-filter: blur(14px); }
 .composer input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; padding: 8px 0; }

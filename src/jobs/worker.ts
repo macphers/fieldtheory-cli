@@ -71,7 +71,7 @@ export class DurableJobWorker {
       const now = this.now().toISOString();
       if (this.current.abortKind === 'cancel') {
         await this.options.repository.transitionJob(leased.id, { state: 'cancelled', now, errorCode: 'cancelled_by_user', errorDetail: 'Cancelled by the user.' });
-      } else if (this.current.abortKind === 'shutdown' || (error instanceof ProcessExecutionError && error.reason === 'aborted')) {
+      } else if (this.current.abortKind === 'shutdown' || controller.signal.aborted || (error instanceof ProcessExecutionError && error.reason === 'aborted')) {
         await this.options.repository.transitionJob(leased.id, { state: 'interrupted', now, errorCode: 'worker_stopped', errorDetail: 'Worker stopped before the stage completed.' });
         await this.options.repository.retryJob(leased.id, now);
       } else if (error instanceof JobStageError && error.disposition === 'blocked') {

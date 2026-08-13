@@ -76,6 +76,14 @@ test('invokeEngineAsync: timeout kills the child promptly and rejects with a cle
   assert.ok(elapsed < 1500, `timeout should fire fast; elapsed=${elapsed}ms`);
 });
 
+test('invokeEngineAsync: abort signal cancels the child promptly', async () => {
+  const { invokeEngineAsync, EngineInvocationError } = await import('../src/engine.js');
+  const controller = new AbortController();
+  const pending = invokeEngineAsync(shEngine('fake-abort', 'sleep 5'), 'ignored', { timeout: 10_000, signal: controller.signal });
+  setTimeout(() => controller.abort(), 50).unref();
+  await assert.rejects(pending, (error: unknown) => error instanceof EngineInvocationError && error.killed && error.message.includes('cancelled'));
+});
+
 test('invokeEngineAsync: captures multi-line stderr in the error message', async () => {
   const { invokeEngineAsync } = await import('../src/engine.js');
   await assert.rejects(

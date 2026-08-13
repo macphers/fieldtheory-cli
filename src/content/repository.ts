@@ -1,4 +1,4 @@
-import type { DiscoveredContentItem, TranscriptArtifact } from './types.js';
+import type { DiscoveredContentItem, KnowledgeClaim, RawChapter, TranscriptArtifact } from './types.js';
 import type { ItemProcessingStatus, JobState, ProcessingJobSnapshot, ProcessingStage } from '../jobs/state-machine.js';
 
 export interface StoredContentItem extends DiscoveredContentItem {
@@ -25,6 +25,29 @@ export interface TranscriptSearchHit {
   endMs: number;
   text: string;
   rank: number;
+}
+
+export interface ChapterRecord {
+  itemId: string;
+  transcriptContentHash: string;
+  artifactHash: string;
+  chapters: RawChapter[];
+  generation?: Record<string, unknown>;
+}
+
+export interface SummaryRecord {
+  itemId: string;
+  transcriptContentHash: string;
+  chaptersArtifactHash?: string;
+  overview: KnowledgeClaim[];
+  details: KnowledgeClaim[];
+  provider: string;
+  model?: string;
+  promptVersion: number;
+  artifactHash: string;
+  validationState: 'supported';
+  createdAt: string;
+  promotedAt: string;
 }
 
 export interface ItemNote {
@@ -72,6 +95,10 @@ export interface ContentRepository {
   saveTranscript(record: TranscriptRecord): Promise<void>;
   getTranscript(itemId: string): Promise<TranscriptRecord | null>;
   searchTranscript(itemId: string, query: string, limit?: number): Promise<TranscriptSearchHit[]>;
+  replaceChapters(record: ChapterRecord): Promise<void>;
+  getChapters(itemId: string): Promise<ChapterRecord | null>;
+  saveSummary(record: SummaryRecord): Promise<void>;
+  getSummary(itemId: string): Promise<SummaryRecord | null>;
   putNote(itemId: string, markdown: string, expectedVersion: number | null, now: string): Promise<ItemNote>;
   getNote(itemId: string): Promise<ItemNote | null>;
   enqueueJob(itemId: string, stage: ProcessingStage, inputFingerprint: string, implementationVersion: number, now: string): Promise<ProcessingJobSnapshot>;

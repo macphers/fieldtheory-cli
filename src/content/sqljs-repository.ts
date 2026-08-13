@@ -6,11 +6,13 @@ import { openDb, saveDb } from '../db.js';
 import { assertJobTransition, projectItemStatus, type JobState, type ProcessingJobSnapshot, type ProcessingStage } from '../jobs/state-machine.js';
 import type {
   ActivityEvent,
+  ChapterRecord,
   ContentRepository,
   ItemNote,
   ItemDeletionManifest,
   JobTransitionInput,
   StoredContentItem,
+  SummaryRecord,
   TranscriptRecord,
   TranscriptSearchHit,
 } from './repository.js';
@@ -224,11 +226,75 @@ export class SqlJsContentRepository implements ContentRepository {
     return this.exclusive(() => {
       const tokens = query.match(/[\p{L}\p{N}]+/gu) ?? [];
       if (tokens.length === 0) return [];
-      const match = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(' AND ');
+      // Natural-language questions contain stop words that rarely appear in the
+      // same caption segment. Rank any matching term instead of requiring every
+      // token, then let grounded answer validation decide whether evidence is enough.
+      const match = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(' OR ');
       return rows(this.db, `SELECT s.segment_id,s.start_ms,s.end_ms,s.text,bm25(transcript_fts) AS rank
         FROM transcript_fts JOIN transcript_segments s ON s.segment_id=transcript_fts.segment_id
         WHERE transcript_fts MATCH ? AND transcript_fts.item_id=? ORDER BY rank LIMIT ?`, [match, itemId, limit])
         .map((row) => ({ segmentId: String(row.segment_id), startMs: Number(row.start_ms), endMs: Number(row.end_ms), text: String(row.text), rank: Number(row.rank) }));
+    });
+  }
+
+  async replaceChapters(record: ChapterRecord): Promise<void> {
+    return this.exclusive(() => this.transaction(() => {
+      const transcript = first(this.db, 'SELECT content_hash FROM transcripts WHERE item_id=?', [record.itemId]);
+      if (!transcript || transcript.content_hash !== record.transcriptContentHash) throw new Error('Chapters do not match the current transcript.');
+      this.db.run('DELETE FROM chapters WHERE item_id=?', [record.itemId]);
+      const generationJson = JSON.stringify({ transcriptContentHash: record.transcriptContentHash, ...(record.generation ?? {}) });
+      record.chapters.forEach((chapter, index) => {
+        const id = createHash('sha256').update(`${record.artifactHash}:${index}:${chapter.startMs}:${chapter.endMs}`).digest('hex').slice(0, 32);
+        this.db.run('INSERT INTO chapters VALUES (?,?,?,?,?,?,?,?)', [id, record.itemId, chapter.startMs, chapter.endMs, chapter.label, chapter.source, record.artifactHash, generationJson]);
+      });
+    }));
+  }
+
+  async getChapters(itemId: string): Promise<ChapterRecord | null> {
+    return this.exclusive(() => {
+      const values = rows(this.db, 'SELECT * FROM chapters WHERE item_id=? ORDER BY start_ms,id', [itemId]);
+      if (values.length === 0) return null;
+      const metadata = JSON.parse(String(values[0].generation_json ?? '{}')) as { transcriptContentHash?: unknown; [key: string]: unknown };
+      const transcriptContentHash = typeof metadata.transcriptContentHash === 'string' ? metadata.transcriptContentHash : '';
+      delete metadata.transcriptContentHash;
+      return {
+        itemId,
+        transcriptContentHash,
+        artifactHash: String(values[0].artifact_hash),
+        chapters: values.map((row) => ({ startMs: Number(row.start_ms), endMs: Number(row.end_ms), label: String(row.label), source: row.source as 'creator' | 'generated' })),
+        ...(Object.keys(metadata).length > 0 ? { generation: metadata } : {}),
+      };
+    });
+  }
+
+  async saveSummary(record: SummaryRecord): Promise<void> {
+    return this.exclusive(() => this.transaction(() => {
+      const transcript = first(this.db, 'SELECT content_hash FROM transcripts WHERE item_id=?', [record.itemId]);
+      if (!transcript || transcript.content_hash !== record.transcriptContentHash) throw new Error('Summary does not match the current transcript.');
+      this.db.run('UPDATE summaries SET promoted_at=NULL WHERE item_id=?', [record.itemId]);
+      this.db.run(`INSERT OR REPLACE INTO summaries(id,item_id,transcript_content_hash,chapters_artifact_hash,overview_json,details_json,provider,model,prompt_version,artifact_hash,validation_state,created_at,promoted_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, [record.artifactHash, record.itemId, record.transcriptContentHash, record.chaptersArtifactHash ?? null, JSON.stringify(record.overview), JSON.stringify(record.details), record.provider, record.model ?? null, record.promptVersion, record.artifactHash, record.validationState, record.createdAt, record.promotedAt]);
+    }));
+  }
+
+  async getSummary(itemId: string): Promise<SummaryRecord | null> {
+    return this.exclusive(() => {
+      const row = first(this.db, 'SELECT * FROM summaries WHERE item_id=? AND promoted_at IS NOT NULL ORDER BY promoted_at DESC,id LIMIT 1', [itemId]);
+      if (!row) return null;
+      return {
+        itemId,
+        transcriptContentHash: String(row.transcript_content_hash),
+        ...(row.chapters_artifact_hash ? { chaptersArtifactHash: String(row.chapters_artifact_hash) } : {}),
+        overview: JSON.parse(String(row.overview_json)),
+        details: JSON.parse(String(row.details_json)),
+        provider: String(row.provider),
+        ...(row.model ? { model: String(row.model) } : {}),
+        promptVersion: Number(row.prompt_version),
+        artifactHash: String(row.artifact_hash),
+        validationState: 'supported',
+        createdAt: String(row.created_at),
+        promotedAt: String(row.promoted_at),
+      };
     });
   }
 

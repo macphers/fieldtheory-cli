@@ -1,4 +1,4 @@
-import type { KnowledgeItem, TranscriptSegment } from './types';
+import type { ChatAnswer, KnowledgeItem, TranscriptSegment } from './types';
 
 let csrfToken: string | null = null;
 
@@ -54,4 +54,13 @@ export async function recordActivity(id: string, type: 'item_opened' | 'citation
     headers: { 'Content-Type': 'application/json', 'X-FieldTheory-CSRF': csrf },
     body: JSON.stringify({ id: crypto.randomUUID(), type, metadata }),
   });
+}
+
+export async function askItem(id: string, question: string): Promise<ChatAnswer> {
+  const csrf = await sessionCsrf();
+  return responseJson(await fetch(`/api/v1/items/${encodeURIComponent(id)}/chat`, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-FieldTheory-CSRF': csrf },
+    body: JSON.stringify({ question }),
+  }));
 }

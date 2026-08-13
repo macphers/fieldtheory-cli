@@ -1,4 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,7 @@ export interface ContentServerOptions {
   bootstrapTtlMs?: number;
   now?: () => number;
   staticDir?: string;
+  chat?: { answer(itemId: string, question: string, signal?: AbortSignal): Promise<{ answer: string; citations: Array<{ segmentId: string; startMs: number; endMs: number }>; refused: boolean }> };
 }
 
 export interface RunningContentServer {
@@ -151,8 +153,11 @@ export async function startContentServer(options: ContentServerOptions): Promise
       if (request.method === 'GET' && itemId) {
         const item = await options.repository.getItem(itemId);
         if (!item) return apiError(response, 404, { code: 'item_not_found', message: 'The requested content item does not exist.', retryable: false, action: 'Return to the library and select another item.' });
-        const [note, jobs, status] = await Promise.all([options.repository.getNote(itemId), options.repository.listJobs(itemId), options.repository.itemStatus(itemId, REQUIRED_STAGES)]);
-        return json(response, 200, { ...item, note, jobs, status });
+        const [note, jobs, status, chapterRecord, summary] = await Promise.all([
+          options.repository.getNote(itemId), options.repository.listJobs(itemId), options.repository.itemStatus(itemId, REQUIRED_STAGES),
+          options.repository.getChapters(itemId), options.repository.getSummary(itemId),
+        ]);
+        return json(response, 200, { ...item, note, jobs, status, chapters: chapterRecord?.chapters ?? [], overview: summary?.overview ?? [], details: summary?.details ?? [] });
       }
       const transcriptItemId = pathItemId(url.pathname, 'transcript');
       if (request.method === 'GET' && transcriptItemId) {
@@ -189,6 +194,17 @@ export async function startContentServer(options: ContentServerOptions): Promise
         if (!job) return apiError(response, 404, { code: 'job_not_found', message: 'The requested job does not belong to this item.', retryable: false, action: 'Reload the item status.' });
         try { return json(response, 200, await options.repository.retryJob(job.id, new Date(now()).toISOString())); }
         catch (error) { return apiError(response, 409, { code: 'job_not_retryable', message: error instanceof Error ? error.message : String(error), retryable: false, action: 'Wait for active work to finish or retry a failed, blocked, or cancelled stage.' }); }
+      }
+      const chatItemId = pathItemId(url.pathname, 'chat');
+      if (request.method === 'POST' && chatItemId) {
+        if (!options.chat) return apiError(response, 503, { code: 'chat_unavailable', message: 'No synthesis model is configured for item chat.', retryable: true, action: 'Configure a Field Theory model and restart `ft app`.' });
+        const body = await readJson(request) as { question?: unknown };
+        if (typeof body.question !== 'string' || body.question.trim().length === 0 || body.question.length > 2_000) {
+          return apiError(response, 400, { code: 'invalid_question', message: 'Chat requires a question between 1 and 2,000 characters.', retryable: false, action: 'Shorten the question and try again.' });
+        }
+        const answer = await options.chat.answer(chatItemId, body.question);
+        await options.repository.recordActivity({ id: randomUUID(), itemId: chatItemId, type: 'question_asked', metadata: { refused: answer.refused }, createdAt: new Date(now()).toISOString() });
+        return json(response, 200, answer);
       }
       if (request.method === 'GET' && url.pathname === '/api/v1/settings/activity') return json(response, 200, { enabled: await options.repository.isActivityEnabled() });
       if (request.method === 'PUT' && url.pathname === '/api/v1/settings/activity') {

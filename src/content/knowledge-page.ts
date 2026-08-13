@@ -138,7 +138,7 @@ function generatedChaptersAreValid(chapters: RawChapter[], durationMs: number): 
     && (index === 0 || chapter.startMs >= chapters[index - 1].endMs));
 }
 
-function validateClaims(
+export function validateKnowledgeClaims(
   claims: KnowledgeClaimInput[],
   transcript: TranscriptArtifact,
   name: string,
@@ -224,8 +224,8 @@ export function buildKnowledgePageArtifact(input: KnowledgePageFixtureInput): Kn
     transcript,
     chapters: artifactChapters,
     chapterStatus,
-    overview: validateClaims(input.synthesis.overview, transcript, 'Overview'),
-    details: validateClaims(input.synthesis.details, transcript, 'Details'),
+    overview: validateKnowledgeClaims(input.synthesis.overview, transcript, 'Overview'),
+    details: validateKnowledgeClaims(input.synthesis.details, transcript, 'Details'),
   };
 }
 

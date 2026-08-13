@@ -31,3 +31,9 @@ export interface TranscriptSegment {
   endMs: number;
   text: string;
 }
+
+export interface ChatAnswer {
+  answer: string;
+  citations: Array<{ segmentId: string; startMs: number; endMs: number }>;
+  refused: boolean;
+}

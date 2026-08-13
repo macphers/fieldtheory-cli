@@ -235,6 +235,7 @@ export async function resolveEngine(profile: EngineRunProfile = {}): Promise<Res
 export interface InvokeOptions {
   timeout?: number;
   maxBuffer?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -463,6 +464,7 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', abort);
       killChild();
       reject(err);
     };
@@ -471,8 +473,19 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', abort);
       resolve(out);
     };
+
+    const abort = () => {
+      fail(new EngineInvocationError({
+        engine: engine.name, bin, stderr: stderrTail(),
+        killed: true, code: null, signal: 'SIGTERM', reason: 'exit',
+        message: `${engine.name} was cancelled`,
+      }));
+    };
+    opts.signal?.addEventListener('abort', abort, { once: true });
+    if (opts.signal?.aborted) abort();
 
     child.stdout?.on('data', (d: Buffer) => {
       stdoutBytes += d.length;
@@ -512,6 +525,7 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       if (timer !== undefined) clearTimeout(timer);
       if (settled) return;
       settled = true;
+      opts.signal?.removeEventListener('abort', abort);
       reject(new EngineInvocationError({
         engine: engine.name, bin,
         stderr: '', killed: false, code: null, signal: null, reason: 'spawn',
@@ -522,6 +536,7 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
     child.on('close', (code, signal) => {
       if (timer !== undefined) clearTimeout(timer);
       if (settled) return;
+      opts.signal?.removeEventListener('abort', abort);
       const stderr = stderrTail();
       if (code === 0) {
         succeed(Buffer.concat(stdoutChunks).toString('utf-8').trim());
