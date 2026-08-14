@@ -6,6 +6,7 @@ import path from 'node:path';
 import metadataFixture from './fixtures/yt-dlp-metadata.json' with { type: 'json' };
 import whisperFixture from './fixtures/whisper-output.json' with { type: 'json' };
 import type { ProcessRequest, ProcessResult, ProcessRunner } from '../src/content/process-runner.js';
+import { ProcessExecutionError } from '../src/content/process-runner.js';
 import { WhisperCppTranscriptProvider } from '../src/content/transcripts/whisper-cpp.js';
 import { YtDlpTranscriptProvider, TranscriptAcquisitionError } from '../src/content/transcripts/yt-dlp.js';
 import { TranscriptFallbackPipeline } from '../src/content/transcripts/fallback.js';
@@ -74,4 +75,29 @@ test('blocks no-caption videos beyond the local duration limit without extractin
   await assert.rejects(pipeline.acquire('https://youtu.be/dQw4w9WgXcQ'), (error: unknown) =>
     error instanceof TranscriptAcquisitionError && error.code === 'captions_unavailable' && error.action.includes('override'));
   assert.equal(runner.requests.some((request) => request.args.includes('--extract-audio')), false);
+});
+
+test('removes temporary transcription work when local transcription fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-fallback-'));
+  const runner = new WhisperFixtureRunner();
+  const noCaptions = structuredClone(metadataFixture);
+  noCaptions.subtitles = {};
+  noCaptions.automatic_captions = {};
+  runner.run = async (request: ProcessRequest): Promise<ProcessResult> => {
+    runner.requests.push(request);
+    if (request.args.includes('--dump-single-json')) return { exitCode: 0, stdout: JSON.stringify(noCaptions), stderr: '' };
+    if (request.command === 'whisper-cli') {
+      const result = { exitCode: 1, stdout: '', stderr: 'model failed' };
+      throw new ProcessExecutionError('whisper failed', result, 'exit');
+    }
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+  const captionProvider = new YtDlpTranscriptProvider({ runner, fetch: async () => new Response('', { status: 404 }) });
+  const whisperProvider = new WhisperCppTranscriptProvider({ runner, binary: 'whisper-cli', modelPath: '/models/base.bin' });
+  const tempRoot = path.join(root, 'tmp');
+  const pipeline = new TranscriptFallbackPipeline({ runner, captionProvider, whisperProvider, contentRoot: root, tempRoot });
+
+  await assert.rejects(pipeline.acquire('https://youtu.be/dQw4w9WgXcQ'), TranscriptAcquisitionError);
+  const tempEntries = await import('node:fs/promises').then(({ readdir }) => readdir(tempRoot));
+  assert.deepEqual(tempEntries, []);
 });

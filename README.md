@@ -62,7 +62,7 @@ export FT_WHISPER_MODEL=/absolute/path/to/ggml-model.bin
 ft app doctor
 ```
 
-Field Theory never downloads a Whisper model silently. Use `ft app --no-sync` to process the existing bookmark cache or `ft app --no-open` to print the one-time authenticated local URL. `SIGINT`/`SIGTERM` checkpoints work and safely resumes interrupted jobs on the next launch.
+Field Theory never downloads a Whisper model silently. Use `ft app --no-sync` to process the existing bookmark cache or `ft app --no-open` to print the one-time authenticated local URL. `SIGINT`/`SIGTERM` checkpoints work and safely resume interrupted jobs on the next launch.
 
 For the private quality and habit trial, generate a claim-by-claim packet and check progress locally:
 

@@ -52,7 +52,8 @@ test('authenticated session outlives the short bootstrap capability', async () =
   let clock = 1_000;
   const server = await startContentServer({ repository, now: () => clock, bootstrapTtlMs: 100, sessionTtlMs: 1_000 });
   try {
-    const { cookie } = await authenticate(server);
+    const { bootstrap, cookie } = await authenticate(server);
+    assert.match(bootstrap.headers.get('set-cookie')!, /Max-Age=1(?:;|$)/);
     clock = 1_101;
     assert.equal((await fetch(`${server.origin}/api/v1/items`, { headers: { cookie } })).status, 200);
     clock = 2_001;
@@ -106,8 +107,11 @@ test('serves items, paginated transcripts, optimistic notes, jobs, and retry thr
 });
 
 test('processing controls persist long-transcription consent and cancel queued work', async () => {
-  const { repository, server, item, job } = await setup();
+  const { repository, server, item } = await setup();
   try {
+    const job = await repository.enqueueJob(item.canonicalId, 'transcript', 'transcript-input', 1, '2026-08-12T20:00:02.000Z');
+    await repository.leaseNextJob('worker', '2026-08-12T20:00:02.000Z');
+    await repository.transitionJob(job.id, { state: 'blocked', now: '2026-08-12T20:00:02.000Z', errorCode: 'captions_unavailable' });
     const { cookie, csrf } = await authenticate(server);
     const headers = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
     const override = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/transcription-override`, { method: 'PUT', headers, body: JSON.stringify({ allowLong: true, retryJobId: job.id }) });
@@ -115,7 +119,26 @@ test('processing controls persist long-transcription consent and cancel queued w
     assert.equal(await repository.hasLongTranscriptionOverride(item.canonicalId), true);
     const cancel = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/cancel`, { method: 'POST', headers, body: JSON.stringify({ jobId: job.id }) });
     assert.equal(cancel.status, 200);
-    assert.equal((await repository.listJobs(item.canonicalId))[0].state, 'cancelled');
+    assert.equal((await repository.listJobs(item.canonicalId)).find((candidate) => candidate.id === job.id)?.state, 'cancelled');
+  } finally { await server.close(); await repository.close(); }
+});
+
+test('long-transcription consent cannot retry another item or a non-transcript stage', async () => {
+  const { repository, server, item, job } = await setup();
+  try {
+    const other: StoredContentItem = { ...item, canonicalId: 'youtube:abcdefghijk', videoId: 'abcdefghijk', canonicalUrl: 'https://www.youtube.com/watch?v=abcdefghijk', sourceRefs: [] };
+    await repository.upsertItem(other);
+    const otherJob = await repository.enqueueJob(other.canonicalId, 'transcript', 'other-transcript', 1, '2026-08-12T20:00:02.000Z');
+    const { cookie, csrf } = await authenticate(server);
+    const headers = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
+
+    const crossItem = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/transcription-override`, { method: 'PUT', headers, body: JSON.stringify({ allowLong: true, retryJobId: otherJob.id }) });
+    assert.equal(crossItem.status, 404);
+    assert.equal(await repository.hasLongTranscriptionOverride(item.canonicalId), false);
+
+    const wrongStage = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/transcription-override`, { method: 'PUT', headers, body: JSON.stringify({ allowLong: true, retryJobId: job.id }) });
+    assert.equal(wrongStage.status, 404);
+    assert.equal(await repository.hasLongTranscriptionOverride(item.canonicalId), false);
   } finally { await server.close(); await repository.close(); }
 });
 

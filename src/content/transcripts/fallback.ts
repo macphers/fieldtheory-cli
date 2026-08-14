@@ -48,20 +48,23 @@ export class TranscriptFallbackPipeline {
     const audioPath = path.join(workDir, 'audio.wav');
     const outputPrefix = path.join(workDir, 'transcript');
     try {
-      await this.options.runner.run({
-        command: this.options.ytDlpBinary ?? 'yt-dlp',
-        args: ['--no-config', '--no-playlist', '--no-warnings', '--extract-audio', '--audio-format', 'wav', '--postprocessor-args', 'ffmpeg:-ar 16000 -ac 1', '--output', path.join(workDir, 'audio.%(ext)s'), url],
-        timeoutMs: 15 * 60_000,
-        maxOutputBytes: 2 * 1024 * 1024,
-        signal,
-      });
-    } catch (error) {
-      if (error instanceof ProcessExecutionError && error.reason === 'aborted') throw error;
-      throw classifyYtDlpFailure(error);
+      try {
+        await this.options.runner.run({
+          command: this.options.ytDlpBinary ?? 'yt-dlp',
+          args: ['--no-config', '--no-playlist', '--no-warnings', '--extract-audio', '--audio-format', 'wav', '--postprocessor-args', 'ffmpeg:-ar 16000 -ac 1', '--output', path.join(workDir, 'audio.%(ext)s'), url],
+          timeoutMs: 15 * 60_000,
+          maxOutputBytes: 2 * 1024 * 1024,
+          signal,
+        });
+      } catch (error) {
+        if (error instanceof ProcessExecutionError && error.reason === 'aborted') throw error;
+        throw classifyYtDlpFailure(error);
+      }
+      const transcript = await this.options.whisperProvider.transcribe(audioPath, outputPrefix, metadataOnly.durationMs, signal);
+      const artifactPath = await persistTranscriptArtifact(this.options.contentRoot, transcript);
+      return { media: metadataOnly, transcript, artifactPath, source: 'local-transcription' };
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
     }
-    const transcript = await this.options.whisperProvider.transcribe(audioPath, outputPrefix, metadataOnly.durationMs, signal);
-    const artifactPath = await persistTranscriptArtifact(this.options.contentRoot, transcript);
-    await rm(workDir, { recursive: true, force: true });
-    return { media: metadataOnly, transcript, artifactPath, source: 'local-transcription' };
   }
 }

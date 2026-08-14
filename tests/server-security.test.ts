@@ -25,6 +25,7 @@ test('session and CSRF comparisons reject partial or malformed tokens', () => {
 
 test('cookie parser handles multiple values without treating attributes as session data', () => {
   assert.deepEqual(parseCookies('other=one; ft_session=abc%20123'), { other: 'one', ft_session: 'abc 123' });
+  assert.deepEqual(parseCookies('broken=%E0%A4%A; ft_session=valid'), { ft_session: 'valid' });
   assert.deepEqual(parseCookies(undefined), {});
 });
 

@@ -43,6 +43,54 @@ function requiredEnvironment(name) {
   return value;
 }
 
+export async function loadPullRequestComments(owner, name, number) {
+  const comments = [];
+  let before = null;
+  do {
+    const data = await githubGraphql(`
+      query ReviewGateComments($owner: String!, $name: String!, $number: Int!, $before: String) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            comments(last: 100, before: $before) {
+              nodes { body }
+              pageInfo { hasPreviousPage startCursor }
+            }
+          }
+        }
+      }
+    `, { owner, name, number, before });
+    const connection = data.repository?.pullRequest?.comments;
+    if (!connection) throw new Error(`Pull request #${number} was not found.`);
+    comments.push(...connection.nodes.map((comment) => comment.body));
+    before = connection.pageInfo.hasPreviousPage ? connection.pageInfo.startCursor : null;
+  } while (before);
+  return comments;
+}
+
+export async function countUnresolvedReviewThreads(owner, name, number) {
+  let unresolved = 0;
+  let after = null;
+  do {
+    const data = await githubGraphql(`
+      query ReviewGateThreads($owner: String!, $name: String!, $number: Int!, $after: String) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100, after: $after) {
+              nodes { isResolved }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }
+      }
+    `, { owner, name, number, after });
+    const connection = data.repository?.pullRequest?.reviewThreads;
+    if (!connection) throw new Error(`Pull request #${number} was not found.`);
+    unresolved += connection.nodes.filter((thread) => !thread.isResolved).length;
+    after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
+  } while (after);
+  return unresolved;
+}
+
 async function main() {
   const [owner, name] = requiredEnvironment('GITHUB_REPOSITORY').split('/');
   const prNumber = Number(requiredEnvironment('PR_NUMBER'));
@@ -50,31 +98,16 @@ async function main() {
   const requireCodexReview = process.env.REQUIRE_CODEX_REVIEW === 'true';
   if (!owner || !name || !Number.isInteger(prNumber) || prNumber <= 0) throw new Error('Invalid repository or PR number.');
 
-  const data = await githubGraphql(`
-    query ReviewGate($owner: String!, $name: String!, $number: Int!) {
-      repository(owner: $owner, name: $name) {
-        pullRequest(number: $number) {
-          comments(last: 100) { nodes { body } }
-          reviewThreads(first: 100) {
-            nodes { isResolved }
-            pageInfo { hasNextPage }
-          }
-        }
-      }
-    }
-  `, { owner, name, number: prNumber });
-
-  const pullRequest = data.repository?.pullRequest;
-  if (!pullRequest) throw new Error(`Pull request #${prNumber} was not found.`);
-  if (pullRequest.reviewThreads.pageInfo.hasNextPage) {
-    throw new Error('The PR has more than 100 review threads; inspect them manually before merging.');
-  }
+  const [comments, unresolvedThreads] = await Promise.all([
+    loadPullRequestComments(owner, name, prNumber),
+    countUnresolvedReviewThreads(owner, name, prNumber),
+  ]);
 
   const result = evaluateReviewGate({
-    comments: pullRequest.comments.nodes.map((comment) => comment.body),
+    comments,
     headSha,
     requireCodexReview,
-    unresolvedThreads: pullRequest.reviewThreads.nodes.filter((thread) => !thread.isResolved).length,
+    unresolvedThreads,
   });
 
   if (result.failures.length) {

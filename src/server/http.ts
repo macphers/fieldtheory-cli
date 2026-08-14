@@ -105,10 +105,11 @@ export async function startContentServer(options: ContentServerOptions): Promise
       }
       const url = new URL(request.url ?? '/', origin);
       if (request.method === 'GET' && url.pathname === '/bootstrap') {
-        const session = sessions.exchangeBootstrap(url.searchParams.get('token'), now(), options.sessionTtlMs ?? 12 * 60 * 60_000);
+        const sessionTtlMs = options.sessionTtlMs ?? 12 * 60 * 60_000;
+        const session = sessions.exchangeBootstrap(url.searchParams.get('token'), now(), sessionTtlMs);
         if (!session) return apiError(response, 401, { code: 'invalid_bootstrap_token', message: 'The launch token is invalid, expired, or already used.', retryable: false, action: 'Run `ft app` again to create a fresh launch URL.' });
         response.statusCode = 303;
-        response.setHeader('Set-Cookie', `ft_session=${encodeURIComponent(session.id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`);
+        response.setHeader('Set-Cookie', `ft_session=${encodeURIComponent(session.id)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.max(0, Math.floor(sessionTtlMs / 1_000))}`);
         response.setHeader('Location', '/');
         response.end();
         return;
@@ -212,9 +213,17 @@ export async function startContentServer(options: ContentServerOptions): Promise
       const overrideItemId = pathItemId(url.pathname, 'transcription-override');
       if (request.method === 'PUT' && overrideItemId) {
         const body = await readJson(request) as { allowLong?: unknown; retryJobId?: unknown };
-        if (typeof body.allowLong !== 'boolean') return apiError(response, 400, { code: 'invalid_override', message: 'Transcription override requires allowLong:true or false.', retryable: false, action: 'Confirm the per-item long transcription choice.' });
+        if (typeof body.allowLong !== 'boolean' || (body.retryJobId !== undefined && typeof body.retryJobId !== 'string')) {
+          return apiError(response, 400, { code: 'invalid_override', message: 'Transcription override requires allowLong:true or false and an optional string retryJobId.', retryable: false, action: 'Confirm the per-item long transcription choice.' });
+        }
+        const retryJob = typeof body.retryJobId === 'string'
+          ? (await options.repository.listJobs(overrideItemId)).find((candidate) => candidate.id === body.retryJobId && candidate.stage === 'transcript')
+          : undefined;
+        if (body.retryJobId !== undefined && !retryJob) {
+          return apiError(response, 404, { code: 'job_not_found', message: 'The requested transcript job does not belong to this item.', retryable: false, action: 'Reload the item processing state.' });
+        }
         await options.repository.setLongTranscriptionOverride(overrideItemId, body.allowLong);
-        if (body.allowLong && typeof body.retryJobId === 'string') await options.repository.retryJob(body.retryJobId, new Date(now()).toISOString());
+        if (body.allowLong && retryJob) await options.repository.retryJob(retryJob.id, new Date(now()).toISOString());
         return json(response, 200, { allowLong: body.allowLong });
       }
       const chatItemId = pathItemId(url.pathname, 'chat');

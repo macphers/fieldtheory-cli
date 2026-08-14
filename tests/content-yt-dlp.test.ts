@@ -88,6 +88,22 @@ test('rejects unsafe caption URLs and malformed provider output', async () => {
     error instanceof TranscriptAcquisitionError && error.code === 'invalid_output');
 });
 
+test('rejects caption redirects to untrusted hosts and oversized bodies before parsing', async () => {
+  const redirectProvider = new YtDlpTranscriptProvider({
+    runner: new FixtureRunner(),
+    fetch: async () => new Response(null, { status: 302, headers: { location: 'https://127.0.0.1/private' } }),
+  });
+  await assert.rejects(redirectProvider.acquire('https://youtu.be/dQw4w9WgXcQ'), (error: unknown) =>
+    error instanceof TranscriptAcquisitionError && error.code === 'invalid_output' && error.message.includes('untrusted'));
+
+  const oversizedProvider = new YtDlpTranscriptProvider({
+    runner: new FixtureRunner(),
+    fetch: async () => new Response('{}', { status: 200, headers: { 'content-length': String(20 * 1024 * 1024 + 1) } }),
+  });
+  await assert.rejects(oversizedProvider.acquire('https://youtu.be/dQw4w9WgXcQ'), (error: unknown) =>
+    error instanceof TranscriptAcquisitionError && error.code === 'invalid_output' && error.message.includes('20 MB'));
+});
+
 test('rejects empty, sparse, and repetitive transcripts deterministically', () => {
   assert.deepEqual(assessTranscriptQuality([], 1000), ['Transcript contains no timed segments.']);
   assert.ok(assessTranscriptQuality([{ startMs: 0, endMs: 1000, text: 'short' }], 10000).length >= 2);

@@ -126,6 +126,43 @@ function isTrustedCaptionHost(hostname: string): boolean {
     || host.endsWith('.googlevideo.com');
 }
 
+const MAX_CAPTION_BYTES = 20 * 1024 * 1024;
+
+function trustedCaptionUrl(value: string | URL, base?: URL): URL {
+  let url: URL;
+  try {
+    url = base ? new URL(value, base) : new URL(value);
+  } catch {
+    throw new TranscriptAcquisitionError('invalid_output', 'yt-dlp returned an invalid caption URL.', true, 'Update yt-dlp and retry.');
+  }
+  if (url.protocol !== 'https:' || !isTrustedCaptionHost(url.hostname)) {
+    throw new TranscriptAcquisitionError('invalid_output', 'yt-dlp returned an untrusted caption URL.', false, 'Update yt-dlp before retrying.');
+  }
+  return url;
+}
+
+async function readCaptionText(response: Response): Promise<string> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_CAPTION_BYTES) {
+    throw new TranscriptAcquisitionError('invalid_output', 'The caption track exceeds the 20 MB safety limit.', false, 'Use local transcription for this video.');
+  }
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_CAPTION_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new TranscriptAcquisitionError('invalid_output', 'The caption track exceeds the 20 MB safety limit.', false, 'Use local transcription for this video.');
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))));
+}
+
 function parseJson3(value: unknown): RawTranscriptSegment[] {
   const events = (value as { events?: Array<{ tStartMs?: number; dDurationMs?: number; segs?: Array<{ utf8?: string }> }> }).events ?? [];
   return events.flatMap((event) => {
@@ -235,29 +272,27 @@ export class YtDlpTranscriptProvider {
       throw new TranscriptAcquisitionError('captions_unavailable', 'No usable creator or automatic captions were found.', false, 'Install the local transcription dependencies shown by `ft app doctor`.');
     }
 
-    let captionUrl: URL;
-    try {
-      captionUrl = new URL(format.url);
-    } catch {
-      throw new TranscriptAcquisitionError('invalid_output', 'yt-dlp returned an invalid caption URL.', true, 'Update yt-dlp and retry.');
-    }
-    if (captionUrl.protocol !== 'https:' || !isTrustedCaptionHost(captionUrl.hostname)) {
-      throw new TranscriptAcquisitionError('invalid_output', 'yt-dlp returned an untrusted caption URL.', false, 'Update yt-dlp before retrying.');
-    }
+    let captionUrl = trustedCaptionUrl(format.url);
 
     let response: Response;
     try {
-      response = await this.fetcher(captionUrl, { signal: AbortSignal.timeout(60_000) });
-    } catch {
+      const signal = AbortSignal.timeout(60_000);
+      for (let redirects = 0; ; redirects += 1) {
+        response = await this.fetcher(captionUrl, { signal, redirect: 'manual' });
+        if (response.status < 300 || response.status >= 400) break;
+        if (redirects >= 3) throw new TranscriptAcquisitionError('invalid_output', 'The caption download exceeded the redirect limit.', false, 'Refresh video metadata and retry.');
+        const location = response.headers.get('location');
+        if (!location) throw new TranscriptAcquisitionError('invalid_output', 'The caption download returned a redirect without a destination.', true, 'Refresh video metadata and retry.');
+        captionUrl = trustedCaptionUrl(location, captionUrl);
+      }
+    } catch (error) {
+      if (error instanceof TranscriptAcquisitionError) throw error;
       throw new TranscriptAcquisitionError('network', 'The selected caption track could not be downloaded.', true, 'Check the network connection and retry.');
     }
     if (!response.ok) {
       throw new TranscriptAcquisitionError('network', `Caption download failed with HTTP ${response.status}.`, response.status >= 500, 'Refresh video metadata and retry.');
     }
-    const raw = await response.text();
-    if (Buffer.byteLength(raw, 'utf8') > 20 * 1024 * 1024) {
-      throw new TranscriptAcquisitionError('invalid_output', 'The caption track exceeds the 20 MB safety limit.', false, 'Use local transcription for this video.');
-    }
+    const raw = await readCaptionText(response);
     let segments: RawTranscriptSegment[];
     try {
       segments = format.ext === 'json3' ? parseJson3(JSON.parse(raw)) : parseVtt(raw);

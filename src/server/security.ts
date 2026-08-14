@@ -80,6 +80,10 @@ export function parseCookies(header: string | undefined): Record<string, string>
   return Object.fromEntries(header.split(';').flatMap((part) => {
     const index = part.indexOf('=');
     if (index < 1) return [];
-    return [[part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())]];
+    try {
+      return [[part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())]];
+    } catch {
+      return [];
+    }
   }));
 }
