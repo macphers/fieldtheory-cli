@@ -72,6 +72,13 @@ test('invokeEngineAsync streams large prompts through stdin when configured', as
   assert.equal(await invokeEngineAsync(engine, prompt), String(prompt.length));
 });
 
+test('invokeEngineAsync tolerates a fast child closing stdin early', async () => {
+  const { invokeEngineAsync } = await import('../src/engine.js');
+  const engine = shEngine('fake-fast-exit', 'exit 0');
+  engine.config.promptViaStdin = true;
+  assert.equal(await invokeEngineAsync(engine, 'x'.repeat(1_000_000)), '');
+});
+
 test('invokeEngineAsync: timeout kills the child promptly and rejects with a clear message', async () => {
   const { invokeEngineAsync } = await import('../src/engine.js');
   const start = Date.now();

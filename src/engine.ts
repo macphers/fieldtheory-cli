@@ -442,11 +442,6 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    // Deliver large prompts through stdin for real engines and always close
-    // the pipe immediately so children never wait on inherited terminal input.
-    // If spawn itself failed (ENOENT etc) `child.stdin` may be null — guard.
-    try { child.stdin?.end(engine.config.promptViaStdin ? prompt : ''); } catch { /* spawn error will surface below */ }
-
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let stdoutBytes = 0;
@@ -542,6 +537,12 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       }));
     });
 
+    child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+      // A fast child can exit before Node finishes closing or writing stdin.
+      // The child's exit status remains authoritative in that expected race.
+      if (err.code !== 'EPIPE') child.emit('error', err);
+    });
+
     child.on('close', (code, signal) => {
       if (timer !== undefined) clearTimeout(timer);
       if (settled) return;
@@ -558,5 +559,11 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
         message: buildMessage(engine.name, 'exit', stderr, code, signal, timeout),
       }));
     });
+
+    // Deliver large prompts through stdin for real engines and always close
+    // the pipe immediately so children never wait on inherited terminal input.
+    // Register error and close handlers first: Linux can report EPIPE when a
+    // short-lived child exits before this write completes.
+    try { child.stdin?.end(engine.config.promptViaStdin ? prompt : ''); } catch { /* spawn error will surface above */ }
   });
 }
