@@ -151,5 +151,5 @@ test('10 processing state keeps the page readable and cancellable', async ({ pag
 });
 
 test('11 blocked state is actionable and responsive on mobile', async ({ page }) => {
-  await loadLibrary(page, 390, 844); await openItem(page, blockedItem.title); await expect(page.getByRole('status')).toContainText('whisper.cpp is not installed'); await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible(); await expectMobileTargets(page); await expectNoHorizontalOverflow(page);
+  await loadLibrary(page, 390, 844); await openItem(page, blockedItem.title); await expect(page.getByRole('status')).toContainText('whisper.cpp is not installed'); await expect(page.getByRole('status')).toContainText('ft app doctor'); await expect(page.getByRole('button', { name: 'Retry' })).toHaveCount(0); await expectMobileTargets(page); await expectNoHorizontalOverflow(page);
 });

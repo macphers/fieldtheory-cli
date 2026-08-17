@@ -13,7 +13,7 @@ npm run test:browser
 
 `check:docs` requires every project-owned Markdown file to be listed in [`docs/inventory.md`](inventory.md) with a purpose, status, and freshness requirement.
 
-`test:browser` builds the production web bundle and exercises 11 representative desktop and mobile configurations in Chromium. It checks core rendering, horizontal overflow, mobile touch-target sizing and crowding, keyboard reachability, visible focus, and the library, transcript, notes, chat, processing, and blocked-state interactions. API responses are deterministic fixtures; HTTP security remains covered separately by server contract tests.
+`test:browser` builds the production web bundle and exercises 11 representative desktop and mobile configurations in Chromium. It uses a dedicated strict preview port and never reuses an unrelated local server. It checks core rendering, horizontal overflow, mobile touch-target sizing and crowding, keyboard reachability, visible focus, and the library, transcript, notes, chat, processing, and blocked-state interactions. API responses are deterministic fixtures; HTTP security remains covered separately by server contract tests.
 
 ## Codex PR review
 

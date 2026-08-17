@@ -35,7 +35,6 @@ function Rail({ onLibrary }: { onLibrary: () => void }) {
   return <nav className="rail" aria-label="Primary navigation">
     <button className="rail-button" aria-label="Back" onClick={() => history.back()}>←</button>
     <button className="rail-button" aria-label="Library" onClick={onLibrary}>□</button>
-    <button className="rail-more" aria-label="Settings">•••</button>
   </nav>;
 }
 
@@ -86,6 +85,7 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
   };
   const activeJob = item.jobs?.find((job) => ['running', 'queued', 'retry_wait'].includes(job.state));
   const problemJob = item.jobs?.find((job) => ['failed', 'blocked', 'cancelled'].includes(job.state));
+  const prerequisiteBlocked = problemJob?.state === 'blocked' && ['binary_missing', 'whisper_binary_missing', 'whisper_model_missing', 'ffmpeg_missing', 'model_missing'].includes(problemJob.lastErrorCode ?? '');
   const runJobAction = async (action: 'retry' | 'cancel' | 'allow-long', jobId: string) => {
     setJobState('working');
     try {
@@ -114,13 +114,13 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
           <span>{statusMessage(item)}</span>
           {problemJob ? <span className="status-actions">
             {problemJob.lastErrorCode === 'captions_unavailable' ? <button disabled={jobState === 'working'} onClick={() => { if (window.confirm('Allow local transcription beyond the normal two-hour limit for this item?')) void runJobAction('allow-long', problemJob.id); }}>Transcribe anyway</button> : null}
-            <button disabled={jobState === 'working'} onClick={() => void runJobAction('retry', problemJob.id)}>Retry</button>
+            {prerequisiteBlocked ? <span>Run <code>ft app doctor</code>, fix the missing prerequisite, then reload this page.</span>
+              : <button disabled={jobState === 'working'} onClick={() => void runJobAction('retry', problemJob.id)}>Retry</button>}
           </span> : activeJob ? <span className="status-actions"><button disabled={jobState === 'working'} onClick={() => void runJobAction('cancel', activeJob.id)}>Cancel</button></span> : null}
           {jobState === 'error' ? <span>Could not update processing. Reload and try again.</span> : null}
         </div>
 
         <section className="source-surface" aria-label="Source navigation">
-          <div className="source-controls" aria-hidden="true"><span>↶</span><span className="play-dot">▶</span><span>↷</span><span className="star">☆</span></div>
           <div className="tabs" role="tablist">
             <button role="tab" aria-selected={tab === 'chapters'} onClick={() => setTab('chapters')} disabled={!item.chapters?.length}>Chapters</button>
             <button role="tab" aria-selected={tab === 'transcript'} onClick={() => setTab('transcript')}>Transcript</button>
