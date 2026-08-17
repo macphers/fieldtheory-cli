@@ -439,23 +439,39 @@ function parseRetryAfterSec(response: Response): number | undefined {
   return undefined;
 }
 
-async function fetchPageWithRetry(csrfToken: string, cursor?: string, cookieHeader?: string, pageSize?: number): Promise<PageResult> {
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Sync interrupted.'));
+  return new Promise((resolve, reject) => {
+    const finish = (): void => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    const abort = (): void => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error('Sync interrupted.'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+async function fetchPageWithRetry(csrfToken: string, cursor?: string, cookieHeader?: string, pageSize?: number, signal?: AbortSignal): Promise<PageResult> {
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt < 4; attempt++) {
-    const response = await fetch(buildUrl(cursor, pageSize), { headers: buildHeaders(csrfToken, cookieHeader) });
+    const response = await fetch(buildUrl(cursor, pageSize), { headers: buildHeaders(csrfToken, cookieHeader), signal });
 
     if (response.status === 429) {
       const retryAfterSec = parseRetryAfterSec(response);
       const waitSec = retryAfterSec ?? Math.min(15 * Math.pow(2, attempt), 120);
       lastError = new RateLimitError(`Rate limited (429) on attempt ${attempt + 1}`, retryAfterSec);
-      await new Promise((r) => setTimeout(r, waitSec * 1000));
+      await abortableDelay(waitSec * 1000, signal);
       continue;
     }
 
     if (response.status >= 500) {
       lastError = new Error(`Server error (${response.status}) on attempt ${attempt + 1}`);
-      await new Promise((r) => setTimeout(r, 5000 * (attempt + 1)));
+      await abortableDelay(5000 * (attempt + 1), signal);
       continue;
     }
 
@@ -640,7 +656,7 @@ export async function syncBookmarksGraphQL(
 
   const fetchNextPage = async (): Promise<PageResult | undefined> => {
     try {
-      return await fetchPageWithRetry(csrfToken, cursor, cookieHeader, pageSize);
+      return await fetchPageWithRetry(csrfToken, cursor, cookieHeader, pageSize, options.signal);
     } catch (error) {
       if (error instanceof RateLimitError) {
         stopReason = 'rate limited';
@@ -712,7 +728,11 @@ export async function syncBookmarksGraphQL(
 
     if (page % checkpointEvery === 0) await writeJsonLines(cachePath, existing);
 
-    if (page < maxPages) await new Promise((r) => setTimeout(r, delayMs));
+    if (options.signal?.aborted) {
+      stopReason = 'interrupted';
+      break;
+    }
+    if (page < maxPages) await abortableDelay(delayMs, options.signal);
   }
 
   if (stopReason === 'unknown') stopReason = page >= maxPages ? 'max pages reached' : 'unknown';
@@ -795,7 +815,11 @@ export async function syncBookmarksGraphQL(
 
       if (page % checkpointEvery === 0) await writeJsonLines(cachePath, existing);
 
-      if (page < maxPages) await new Promise((r) => setTimeout(r, delayMs));
+      if (options.signal?.aborted) {
+        stopReason = 'interrupted';
+        break;
+      }
+      if (page < maxPages) await abortableDelay(delayMs, options.signal);
     }
 
     if (stopReason !== 'end of bookmarks' && page >= maxPages) {

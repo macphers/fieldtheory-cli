@@ -331,9 +331,8 @@ export function registerCompanionCommands(program: Command, safe: SafeAction): v
       console.log(target.path);
     }));
 
-  const appCommand = program
-    .command('app')
-    .description('Open Field Theory app targets');
+  const appCommand = program.commands.find((command) => command.name() === 'app')
+    ?? program.command('app').description('Open Field Theory app targets');
 
   appCommand
     .command('open')

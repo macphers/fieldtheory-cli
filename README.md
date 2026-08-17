@@ -42,6 +42,40 @@ ft stats
 
 On first run, `ft sync` extracts your X session from your browser and downloads your bookmarks into `~/.fieldtheory/bookmarks/`.
 
+### Turn saved videos into knowledge pages
+
+```bash
+# 1. Install the only tool required for captioned YouTube videos
+brew install yt-dlp
+
+# 2. Sync X bookmarks, process linked videos, and open the local library
+ft app
+
+# 3. If Field Theory reports a missing prerequisite, inspect the exact capability
+ft app doctor
+```
+
+The knowledge library deduplicates YouTube links across bookmarks, prefers creator or automatic captions, and falls back to local `whisper.cpp` transcription when captions are unavailable. It builds chapters and citation-grounded summaries, supports transcript search and cited item chat, and keeps notes locally. The page appears progressively while background work continues.
+
+`ft app doctor` reports three separate capabilities: captioned videos, local transcription fallback, and summaries/chat. Missing optional tools do not prevent the caption-first path. Captioned videos require only `yt-dlp` after your X bookmarks have been synced. An authenticated Claude Code or Codex CLI enables synthesis. Local fallback additionally requires `ffmpeg`, `whisper.cpp`, and an explicitly installed model:
+
+```bash
+brew install yt-dlp ffmpeg whisper-cpp
+export FT_WHISPER_MODEL=/absolute/path/to/ggml-model.bin
+ft app doctor
+```
+
+Field Theory never downloads a Whisper model silently. Use `ft app --no-sync` to process the existing bookmark cache or `ft app --no-open` to print the one-time authenticated local URL. `SIGINT`/`SIGTERM` checkpoints work and safely resume interrupted jobs on the next launch.
+
+For the private quality and habit trial, generate a claim-by-claim packet and check progress locally:
+
+```bash
+ft app review --output ~/knowledge-pages-claim-review.md
+ft app report
+```
+
+The review packet includes every overview/detail claim, quoted transcript evidence, timestamped source links, and verdict checkboxes. The report marks the seven-day, three-revisited-page habit gate explicitly. Review output is created owner-only and will not overwrite an existing file.
+
 ## Commands
 
 ### Sync
@@ -125,6 +159,10 @@ On first run, `ft sync` extracts your X session from your browser and downloads 
 | `ft commands new <name>` | Create a reusable portable command |
 | `ft commands validate [name]` | Check command shape and guardrails |
 | `ft install app` | Download and install the latest Field Theory Mac app from `afar1/field-releases` |
+| `ft app` | Run the private local knowledge library, sync bookmarks, and process linked YouTube videos |
+| `ft app doctor` | Check X cache access, media tools, model setup, disk, temp cleanup, and loopback security |
+| `ft app report` | Summarize private local opens, citation clicks, notes, questions, and revisited pages |
+| `ft app review [--output <path>]` | Create a private claim-review packet with exact cited transcript excerpts |
 
 `ft library open` targets the packaged Field Theory app by bundle id (`com.fieldtheory.app`) instead of trusting the system-wide `fieldtheory://` handler. That avoids accidentally opening a generic Electron development app when another checkout registered the same URL scheme.
 
@@ -222,14 +260,20 @@ Data is stored locally under `~/.fieldtheory/`:
 ~/.fieldtheory/ideas/
   seeds/runs/nodes/       # Possible seeds, runs, and node prompt artifacts
   batches/jobs/nightly/   # Multi-repo batches, background jobs, and schedules
+
+~/.fieldtheory/content/
+  content.sqlite          # knowledge items, jobs, notes, summaries, and local activity
+  artifacts/transcripts/  # content-addressed normalized transcript JSON
+  tmp/                    # bounded temporary audio, swept after interrupted work
 ```
 
-Override locations with `FT_DATA_DIR`, `FT_LIBRARY_DIR`, and `FT_COMMANDS_DIR`:
+Override locations with `FT_DATA_DIR`, `FT_LIBRARY_DIR`, `FT_COMMANDS_DIR`, and `FT_CONTENT_DIR`:
 
 ```bash
 export FT_DATA_DIR=/path/to/custom/dir
 export FT_LIBRARY_DIR=/path/to/custom/library
 export FT_COMMANDS_DIR=/path/to/custom/commands
+export FT_CONTENT_DIR=/path/to/custom/content
 ```
 
 To remove bookmark and Library data: `rm -rf ~/.fieldtheory/bookmarks ~/.fieldtheory/library`
@@ -292,7 +336,9 @@ Session sync extracts cookies from your browser's local database. Use `ft sync -
 
 ## Security
 
-**Your data stays local.** No telemetry, no analytics, nothing phoned home. The CLI only makes network requests to X's API during sync.
+**Your data stays local.** There is no Field Theory telemetry or analytics. Sync contacts X; knowledge pages contact YouTube for metadata/captions and the locally configured model CLI for synthesis. Notes, transcripts, activity, and generated pages stay under `~/.fieldtheory/`.
+
+**The knowledge app is loopback-only.** It binds to `127.0.0.1` on a random port, exchanges a short-lived one-time launch token for an HttpOnly SameSite session, rejects forwarded and mismatched Host requests, and requires same-origin CSRF protection for mutations.
 
 **Chrome session sync** reads cookies from Chrome's local database, uses them for the sync request, and discards them. Cookies are never stored separately.
 

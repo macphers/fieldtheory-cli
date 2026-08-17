@@ -16,28 +16,36 @@ import { PromptCancelledError, promptText } from './prompt.js';
 export interface EngineConfig {
   bin: string;
   args: (prompt: string, engine?: Pick<ResolvedEngine, 'model' | 'effort'>) => string[];
+  promptViaStdin?: boolean;
 }
 
 const KNOWN_ENGINES: Record<string, EngineConfig> = {
   claude: {
-    bin: 'claude',
-    args: (p, engine) => [
+    bin: process.env.FT_CLAUDE_PATH ?? 'claude',
+    promptViaStdin: true,
+    args: (_p, engine) => [
       '-p',
       '--output-format',
       'text',
       ...(engine?.model ? ['--model', engine.model] : []),
       ...(engine?.effort ? ['--effort', engine.effort] : []),
-      p,
     ],
   },
   codex: {
-    bin: 'codex',
-    args: (p, engine) => [
+    bin: process.env.FT_CODEX_PATH ?? 'codex',
+    promptViaStdin: true,
+    args: (_p, engine) => [
       'exec',
       '--skip-git-repo-check',
+      '--ignore-user-config',
+      '--ephemeral',
+      '--sandbox',
+      'read-only',
+      '--color',
+      'never',
       ...(engine?.model ? ['--model', engine.model] : []),
       ...(engine?.effort ? ['--config', `model_reasoning_effort="${engine.effort}"`] : []),
-      p,
+      '-',
     ],
   },
 };
@@ -235,6 +243,7 @@ export async function resolveEngine(profile: EngineRunProfile = {}): Promise<Res
 export interface InvokeOptions {
   timeout?: number;
   maxBuffer?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -362,7 +371,7 @@ export function invokeEngine(engine: ResolvedEngine, prompt: string, opts: Invok
   const maxBuffer = opts.maxBuffer ?? DEFAULT_MAXBUF;
 
   const result = spawnSync(bin, args(prompt, engine), {
-    input: '',              // EOF on stdin — do not inherit parent stdin
+    input: engine.config.promptViaStdin ? prompt : '',
     timeout,
     maxBuffer,
     encoding: 'buffer',
@@ -433,10 +442,6 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    // Close stdin immediately with EOF so `claude -p` doesn't wait on it.
-    // If spawn itself failed (ENOENT etc) `child.stdin` may be null — guard.
-    try { child.stdin?.end(); } catch { /* spawn error will surface below */ }
-
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let stdoutBytes = 0;
@@ -463,6 +468,7 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', abort);
       killChild();
       reject(err);
     };
@@ -471,8 +477,19 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', abort);
       resolve(out);
     };
+
+    const abort = () => {
+      fail(new EngineInvocationError({
+        engine: engine.name, bin, stderr: stderrTail(),
+        killed: true, code: null, signal: 'SIGTERM', reason: 'exit',
+        message: `${engine.name} was cancelled`,
+      }));
+    };
+    opts.signal?.addEventListener('abort', abort, { once: true });
+    if (opts.signal?.aborted) abort();
 
     child.stdout?.on('data', (d: Buffer) => {
       stdoutBytes += d.length;
@@ -512,6 +529,7 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       if (timer !== undefined) clearTimeout(timer);
       if (settled) return;
       settled = true;
+      opts.signal?.removeEventListener('abort', abort);
       reject(new EngineInvocationError({
         engine: engine.name, bin,
         stderr: '', killed: false, code: null, signal: null, reason: 'spawn',
@@ -519,9 +537,16 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
       }));
     });
 
+    child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+      // A fast child can exit before Node finishes closing or writing stdin.
+      // The child's exit status remains authoritative in that expected race.
+      if (err.code !== 'EPIPE') child.emit('error', err);
+    });
+
     child.on('close', (code, signal) => {
       if (timer !== undefined) clearTimeout(timer);
       if (settled) return;
+      opts.signal?.removeEventListener('abort', abort);
       const stderr = stderrTail();
       if (code === 0) {
         succeed(Buffer.concat(stdoutChunks).toString('utf-8').trim());
@@ -534,5 +559,11 @@ export function invokeEngineAsync(engine: ResolvedEngine, prompt: string, opts: 
         message: buildMessage(engine.name, 'exit', stderr, code, signal, timeout),
       }));
     });
+
+    // Deliver large prompts through stdin for real engines and always close
+    // the pipe immediately so children never wait on inherited terminal input.
+    // Register error and close handlers first: Linux can report EPIPE when a
+    // short-lived child exits before this write completes.
+    try { child.stdin?.end(engine.config.promptViaStdin ? prompt : ''); } catch { /* spawn error will surface above */ }
   });
 }

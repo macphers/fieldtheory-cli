@@ -33,7 +33,12 @@ import { exportBookmarks } from './md-export.js';
 import { renderViz } from './bookmarks-viz.js';
 import { listBrowserIds } from './browsers.js';
 import { configureHttpProxyFromEnv } from './http-proxy.js';
-import { canonicalLibraryDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
+import { canonicalLibraryDir, contentDatabasePath, contentDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
+import { runContentApp } from './content/app.js';
+import { loadClaimReviewPacket } from './content/review.js';
+import { assessContentCapabilities, inspectContentDependencies } from './content/doctor.js';
+import { NodeProcessRunner } from './content/process-runner.js';
+import { SqlJsContentRepository } from './content/sqljs-repository.js';
 import { PromptCancelledError, promptText } from './prompt.js';
 import { skillWithFrontmatter, installSkill, uninstallSkill } from './skill.js';
 import { registerCompanionCommands } from './companion-cli.js';
@@ -821,6 +826,74 @@ export function buildCli() {
       console.log(logo());
       showWhatsNew();
     });
+
+  // ── local knowledge app ────────────────────────────────────────────────
+
+  const appCommand = program
+    .command('app')
+    .description('Open the local knowledge library and process saved media')
+    .option('--no-sync', 'Use the existing bookmark cache without syncing X')
+    .option('--no-open', 'Print the authenticated URL without opening a browser')
+    .addOption(engineOption())
+    .action(safe(async (options) => {
+      await runContentApp({
+        engine: options.engine ? String(options.engine) : undefined,
+        sync: options.sync,
+        open: options.open,
+        onStatus: (message) => process.stderr.write(`  ${message}\n`),
+      });
+    }));
+
+  appCommand
+    .command('doctor')
+    .description('Check local knowledge-page dependencies')
+    .action(safe(async () => {
+      const checks = await inspectContentDependencies({ runner: new NodeProcessRunner(), contentRoot: contentDir() });
+      for (const check of checks) {
+        const mark = check.state === 'ready' ? '\u2713' : check.state === 'unsupported' ? '!' : '\u2717';
+        const detail = check.version ?? check.location ?? check.action ?? '';
+        console.log(`  ${mark} ${check.name}: ${check.state}${detail ? ` — ${detail}` : ''}`);
+        if (check.action && detail !== check.action) console.log(`    ${check.action}`);
+      }
+      const capabilities = assessContentCapabilities(checks);
+      console.log('');
+      console.log(`  Captioned videos: ${capabilities.captionedVideos ? 'ready' : 'not ready'}`);
+      console.log(`  Local transcription fallback: ${capabilities.localTranscription ? 'ready' : 'optional dependencies missing'}`);
+      console.log(`  Summaries and chat: ${capabilities.synthesis ? 'ready' : 'optional provider missing'}`);
+      if (!capabilities.usable) process.exitCode = 1;
+    }));
+
+  appCommand
+    .command('report')
+    .description('Summarize private local knowledge-page activity')
+    .option('--json', 'Print machine-readable JSON')
+    .action(safe(async (options) => {
+      const repository = await SqlJsContentRepository.open(contentDatabasePath());
+      try {
+        const report = await repository.activityReport();
+        if (options.json) { console.log(JSON.stringify(report, null, 2)); return; }
+        console.log(`  Local activity: ${report.totalEvents} events across ${report.items.length} items`);
+        console.log(`  Opens ${report.byType.item_opened} · citations ${report.byType.citation_clicked} · notes ${report.byType.note_saved} · questions ${report.byType.question_asked}`);
+        console.log(`  Habit trial: ${report.habitTrial.met ? 'passed' : 'in progress'} — ${report.habitTrial.spanDays}/7 days, ${report.habitTrial.revisitedPages}/3 revisited pages`);
+        for (const item of report.items) console.log(`  - ${item.title}: ${item.opens} opens, ${item.citationClicks} citations, ${item.notes} notes, ${item.questions} questions`);
+      } finally { await repository.close(); }
+    }));
+
+  appCommand
+    .command('review')
+    .description('Create a private claim-by-claim review packet with cited excerpts')
+    .option('-o, --output <path>', 'Write a new private Markdown file instead of printing to stdout')
+    .action(safe(async (options) => {
+      const repository = await SqlJsContentRepository.open(contentDatabasePath());
+      try {
+        const packet = await loadClaimReviewPacket(repository);
+        if (!options.output) { process.stdout.write(packet); return; }
+        const outputPath = path.resolve(String(options.output));
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, packet, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        console.log(`  Review packet: ${outputPath}`);
+      } finally { await repository.close(); }
+    }));
 
   // ── sync ────────────────────────────────────────────────────────────────
 

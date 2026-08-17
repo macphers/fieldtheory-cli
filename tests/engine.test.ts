@@ -159,7 +159,8 @@ test('resolveEngine: carries explicit model and effort into engine args', async 
 
     const args = resolved.config.args('PROMPT', resolved);
     if (engineName === 'claude') {
-      assert.deepEqual(args.slice(-5), ['--output-format', 'text', '--model', 'opus', '--effort', 'medium', 'PROMPT'].slice(-5));
+      assert.deepEqual(args, ['-p', '--output-format', 'text', '--model', 'opus', '--effort', 'medium']);
+      assert.equal(resolved.config.promptViaStdin, true);
       assert.ok(args.includes('--model'));
       assert.ok(args.includes('--effort'));
     } else {
@@ -277,8 +278,9 @@ test('resolveEngine: codex args include skip-git-repo-check', async () => {
     const resolved = await resolveEngine({ override: 'codex' });
     assert.deepEqual(
       resolved.config.args('hello'),
-      ['exec', '--skip-git-repo-check', 'hello'],
+      ['exec', '--skip-git-repo-check', '--ignore-user-config', '--ephemeral', '--sandbox', 'read-only', '--color', 'never', '-'],
     );
+    assert.equal(resolved.config.promptViaStdin, true);
   } finally {
     process.env.PATH = origPath;
     fs.rmSync(tmpDir, { recursive: true, force: true });
