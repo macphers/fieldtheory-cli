@@ -6,9 +6,13 @@ Field Theory CLI is MIT-licensed local-first software for bookmark sync, Library
 
 ```bash
 npm ci
+npm run check:docs
 npm run build
 npm test
+npm run test:browser
 ```
+
+See the [engineering harness](docs/harness.md) for what each check covers and how the optional Codex PR review is configured.
 
 ## Contribution Terms
 
