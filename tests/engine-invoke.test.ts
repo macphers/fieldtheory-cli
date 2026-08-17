@@ -64,6 +64,21 @@ test('invokeEngineAsync: closes stdin so cat-like children see EOF immediately',
   assert.ok(elapsed < 2000, `cat should exit immediately when stdin is closed; elapsed=${elapsed}ms`);
 });
 
+test('invokeEngineAsync streams large prompts through stdin when configured', async () => {
+  const { invokeEngineAsync } = await import('../src/engine.js');
+  const engine = shEngine('fake-stdin', 'wc -c | tr -d " "');
+  engine.config.promptViaStdin = true;
+  const prompt = 'x'.repeat(250_000);
+  assert.equal(await invokeEngineAsync(engine, prompt), String(prompt.length));
+});
+
+test('invokeEngineAsync tolerates a fast child closing stdin early', async () => {
+  const { invokeEngineAsync } = await import('../src/engine.js');
+  const engine = shEngine('fake-fast-exit', 'exit 0');
+  engine.config.promptViaStdin = true;
+  assert.equal(await invokeEngineAsync(engine, 'x'.repeat(1_000_000)), '');
+});
+
 test('invokeEngineAsync: timeout kills the child promptly and rejects with a clear message', async () => {
   const { invokeEngineAsync } = await import('../src/engine.js');
   const start = Date.now();
@@ -74,6 +89,14 @@ test('invokeEngineAsync: timeout kills the child promptly and rejects with a cle
   const elapsed = Date.now() - start;
   // Should fire near the 200ms deadline, not after the full 5s sleep.
   assert.ok(elapsed < 1500, `timeout should fire fast; elapsed=${elapsed}ms`);
+});
+
+test('invokeEngineAsync: abort signal cancels the child promptly', async () => {
+  const { invokeEngineAsync, EngineInvocationError } = await import('../src/engine.js');
+  const controller = new AbortController();
+  const pending = invokeEngineAsync(shEngine('fake-abort', 'sleep 5'), 'ignored', { timeout: 10_000, signal: controller.signal });
+  setTimeout(() => controller.abort(), 50).unref();
+  await assert.rejects(pending, (error: unknown) => error instanceof EngineInvocationError && error.killed && error.message.includes('cancelled'));
 });
 
 test('invokeEngineAsync: captures multi-line stderr in the error message', async () => {

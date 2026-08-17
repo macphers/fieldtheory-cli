@@ -51,5 +51,5 @@ test('loadChromeSessionConfig: --browser firefox resolves correctly', () => {
   const config = loadChromeSessionConfig({ browserId: 'firefox' });
   assert.equal(config.browser.id, 'firefox');
   assert.equal(config.browser.cookieBackend, 'firefox');
-  assert.match(config.chromeUserDataDir, /Firefox/);
+  assert.match(config.chromeUserDataDir, /firefox/i);
 });

@@ -1,0 +1,18 @@
+{
+  "id": "dQw4w9WgXcQ",
+  "title": "A Redacted Test Conversation",
+  "channel": "Example Channel",
+  "duration": 180,
+  "thumbnail": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+  "language": "en",
+  "subtitles": {
+    "en": [
+      { "ext": "json3", "url": "https://www.youtube.com/api/timedtext?kind=creator", "name": "English" }
+    ]
+  },
+  "automatic_captions": {
+    "en": [
+      { "ext": "json3", "url": "https://www.youtube.com/api/timedtext?kind=automatic", "name": "English auto-generated" }
+    ]
+  }
+}

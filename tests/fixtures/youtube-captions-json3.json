@@ -1,0 +1,7 @@
+{
+  "events": [
+    { "tStartMs": 0, "dDurationMs": 60000, "segs": [{ "utf8": "The opening establishes a practical question and explains why the problem matters." }] },
+    { "tStartMs": 60000, "dDurationMs": 60000, "segs": [{ "utf8": "The middle introduces a concrete mechanism with evidence and a useful example." }] },
+    { "tStartMs": 120000, "dDurationMs": 60000, "segs": [{ "utf8": "The conclusion compares the tradeoffs and proposes a sensible next action." }] }
+  ]
+}
