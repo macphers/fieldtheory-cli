@@ -45,16 +45,19 @@ On first run, `ft sync` extracts your X session from your browser and downloads 
 ### Turn saved videos into knowledge pages
 
 ```bash
-# Verify the local media and model setup
-ft app doctor
+# 1. Install the only tool required for captioned YouTube videos
+brew install yt-dlp
 
-# Sync X bookmarks, process linked YouTube videos, and open the local library
+# 2. Sync X bookmarks, process linked videos, and open the local library
 ft app
+
+# 3. If Field Theory reports a missing prerequisite, inspect the exact capability
+ft app doctor
 ```
 
 The knowledge library deduplicates YouTube links across bookmarks, prefers creator or automatic captions, and falls back to local `whisper.cpp` transcription when captions are unavailable. It builds chapters and citation-grounded summaries, supports transcript search and cited item chat, and keeps notes locally. The page appears progressively while background work continues.
 
-Captioned videos require `yt-dlp` plus an authenticated Claude Code or Codex CLI for synthesis. Local fallback additionally requires `ffmpeg`, `whisper.cpp`, and an explicitly installed model:
+`ft app doctor` reports three separate capabilities: captioned videos, local transcription fallback, and summaries/chat. Missing optional tools do not prevent the caption-first path. Captioned videos require only `yt-dlp` after your X bookmarks have been synced. An authenticated Claude Code or Codex CLI enables synthesis. Local fallback additionally requires `ffmpeg`, `whisper.cpp`, and an explicitly installed model:
 
 ```bash
 brew install yt-dlp ffmpeg whisper-cpp

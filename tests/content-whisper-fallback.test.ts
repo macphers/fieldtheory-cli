@@ -101,3 +101,45 @@ test('removes temporary transcription work when local transcription fails', asyn
   const tempEntries = await import('node:fs/promises').then(({ readdir }) => readdir(tempRoot));
   assert.deepEqual(tempEntries, []);
 });
+
+test('classifies missing whisper binary and model as blocked prerequisites', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-whisper-'));
+  const result = { exitCode: -1, stdout: '', stderr: '' };
+  const runner: ProcessRunner = { run: async () => { throw new ProcessExecutionError('missing', result, 'spawn'); } };
+  const missingBinary = new WhisperCppTranscriptProvider({ runner, binary: 'missing-whisper', modelPath: '/models/base.bin' });
+  await assert.rejects(missingBinary.transcribe('audio.wav', path.join(root, 'out'), 1_000), (error: unknown) =>
+    error instanceof TranscriptAcquisitionError && error.code === 'whisper_binary_missing' && !error.retryable);
+
+  const missingModel = new WhisperCppTranscriptProvider({ runner: new WhisperFixtureRunner(), binary: 'whisper-cli', modelPath: '' });
+  await assert.rejects(missingModel.transcribe('audio.wav', path.join(root, 'out-2'), 1_000), (error: unknown) =>
+    error instanceof TranscriptAcquisitionError && error.code === 'whisper_model_missing' && !error.retryable);
+
+  const loadFailureRunner: ProcessRunner = { run: async () => {
+    throw new ProcessExecutionError('model load failed', { exitCode: 1, stdout: '', stderr: 'failed to open ggml model' }, 'exit');
+  } };
+  const unloadableModel = new WhisperCppTranscriptProvider({ runner: loadFailureRunner, binary: 'whisper-cli', modelPath: '/models/missing.bin' });
+  await assert.rejects(unloadableModel.transcribe('audio.wav', path.join(root, 'out-3'), 1_000), (error: unknown) =>
+    error instanceof TranscriptAcquisitionError && error.code === 'whisper_model_missing' && !error.retryable);
+});
+
+test('classifies missing ffmpeg during audio extraction as a blocked prerequisite', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-ffmpeg-'));
+  const runner = new WhisperFixtureRunner();
+  const noCaptions = structuredClone(metadataFixture);
+  noCaptions.subtitles = {};
+  noCaptions.automatic_captions = {};
+  runner.run = async (request: ProcessRequest): Promise<ProcessResult> => {
+    runner.requests.push(request);
+    if (request.args.includes('--dump-single-json')) return { exitCode: 0, stdout: JSON.stringify(noCaptions), stderr: '' };
+    throw new ProcessExecutionError('audio extraction failed', { exitCode: 1, stdout: '', stderr: 'ffmpeg is not installed' }, 'exit');
+  };
+  const pipeline = new TranscriptFallbackPipeline({
+    runner,
+    captionProvider: new YtDlpTranscriptProvider({ runner, fetch: async () => new Response('', { status: 404 }) }),
+    whisperProvider: new WhisperCppTranscriptProvider({ runner, binary: 'whisper-cli', modelPath: '/models/base.bin' }),
+    contentRoot: root,
+    tempRoot: path.join(root, 'tmp'),
+  });
+  await assert.rejects(pipeline.acquire('https://youtu.be/dQw4w9WgXcQ'), (error: unknown) =>
+    error instanceof TranscriptAcquisitionError && error.code === 'ffmpeg_missing' && !error.retryable);
+});

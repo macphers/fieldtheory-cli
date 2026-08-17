@@ -40,6 +40,26 @@ test('acquires creator captions with normalized media and stable transcript iden
   assert.equal(runner.requests[0].args.includes('--cookies-from-browser'), false);
 });
 
+test('propagates cancellation through metadata and caption download', async () => {
+  const runner = new FixtureRunner();
+  const controller = new AbortController();
+  let fetchSignal: AbortSignal | null = null;
+  const provider = new YtDlpTranscriptProvider({ runner, fetch: async (_url, init) => {
+    fetchSignal = init?.signal as AbortSignal;
+    return new Response(JSON.stringify(captions));
+  } });
+  await provider.acquire('https://youtu.be/dQw4w9WgXcQ', undefined, controller.signal);
+  assert.equal(runner.requests[0].signal, controller.signal);
+  assert.ok(fetchSignal);
+  controller.abort();
+  assert.equal(fetchSignal!.aborted, true);
+
+  const aborted = new ProcessExecutionError('aborted', { exitCode: -1, stdout: '', stderr: '' }, 'aborted');
+  const abortedProvider = new YtDlpTranscriptProvider({ runner: new FixtureRunner({}, aborted), fetch: fixtureFetch(captions) });
+  await assert.rejects(abortedProvider.acquireMetadata('https://youtu.be/dQw4w9WgXcQ'), (error: unknown) =>
+    error instanceof ProcessExecutionError && error.reason === 'aborted');
+});
+
 test('falls back to automatic captions only when creator captions are absent', async () => {
   const value = structuredClone(metadata);
   value.subtitles = {};

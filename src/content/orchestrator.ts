@@ -19,7 +19,7 @@ function hash(value: unknown): string {
 function stageError(error: unknown): JobStageError {
   if (error instanceof JobStageError) return error;
   if (error instanceof TranscriptAcquisitionError) {
-    const blocked = ['binary_missing', 'authentication_required', 'restricted', 'captions_unavailable'].includes(error.code);
+    const blocked = ['binary_missing', 'whisper_binary_missing', 'whisper_model_missing', 'ffmpeg_missing', 'authentication_required', 'restricted', 'captions_unavailable'].includes(error.code);
     return new JobStageError(error.code, `${error.message} ${error.action}`, error.retryable ? 'retry' : blocked ? 'blocked' : 'failed');
   }
   if (error instanceof EngineInvocationError) {
@@ -70,7 +70,7 @@ export class ContentOrchestrator {
         try {
           if (signal.aborted) throw new JobStageError('worker_stopped', 'Worker stopped.', 'retry');
           const item = await this.requiredItem(job.itemId);
-          const metadata = await this.options.metadataProvider.acquireMetadata(item.canonicalUrl);
+          const metadata = await this.options.metadataProvider.acquireMetadata(item.canonicalUrl, signal);
           const now = this.now().toISOString();
           await this.options.repository.upsertItem({ ...item, ...metadata, canonicalId: item.canonicalId, canonicalUrl: item.canonicalUrl, type: 'youtube', sourceRefs: item.sourceRefs, updatedAt: now });
           const metadataHash = hash(metadata);

@@ -74,6 +74,26 @@ test('shutdown requeues interrupted work while user cancellation remains resumab
   }
 });
 
+test('worker does not record success when a handler resolves after cancellation', async () => {
+  const repo = await setup();
+  await repo.enqueueJob(ITEM_ID, 'transcript', 'cancel-resolves', 1, '2026-08-12T20:00:00.000Z');
+  let started!: () => void;
+  const didStart = new Promise<void>((resolve) => { started = resolve; });
+  const worker = new DurableJobWorker({
+    repository: repo, workerId: 'worker', now: () => new Date('2026-08-12T20:00:01.000Z'),
+    handlers: { transcript: async (_job, signal) => new Promise<void>((resolve) => {
+      started();
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    }) },
+  });
+  const running = worker.runOnce();
+  await didStart;
+  worker.cancelCurrent();
+  await running;
+  assert.equal((await repo.listJobs())[0].state, 'cancelled');
+  await repo.close();
+});
+
 test('worker stops retrying after the configured attempt ceiling', async () => {
   const repo = await setup();
   const job = await repo.enqueueJob(ITEM_ID, 'metadata', 'ceiling', 1, '2026-08-12T20:00:00.000Z');

@@ -42,6 +42,9 @@ function metadataChapters(metadata: YtDlpMetadata): YtDlpMediaMetadata['creatorC
 
 export type TranscriptFailureCode =
   | 'binary_missing'
+  | 'whisper_binary_missing'
+  | 'whisper_model_missing'
+  | 'ffmpeg_missing'
   | 'network'
   | 'restricted'
   | 'authentication_required'
@@ -225,16 +228,18 @@ export class YtDlpTranscriptProvider {
     this.toolVersion = options.toolVersion;
   }
 
-  private async metadata(url: string): Promise<YtDlpMetadata> {
+  private async metadata(url: string, signal?: AbortSignal): Promise<YtDlpMetadata> {
     let metadata: YtDlpMetadata;
     try {
       const result = await this.runner.run({
         command: this.binary,
         args: ['--no-config', '--no-playlist', '--skip-download', '--no-warnings', '--dump-single-json', url],
         timeoutMs: 120_000,
+        signal,
       });
       metadata = JSON.parse(result.stdout) as YtDlpMetadata;
     } catch (error) {
+      if (error instanceof ProcessExecutionError && error.reason === 'aborted') throw error;
       if (error instanceof SyntaxError) {
         throw new TranscriptAcquisitionError('invalid_output', 'yt-dlp returned invalid metadata JSON.', true, 'Update yt-dlp and retry.');
       }
@@ -246,8 +251,8 @@ export class YtDlpTranscriptProvider {
     return metadata;
   }
 
-  async acquireMetadata(url: string): Promise<YtDlpMediaMetadata> {
-    const metadata = await this.metadata(url);
+  async acquireMetadata(url: string, signal?: AbortSignal): Promise<YtDlpMediaMetadata> {
+    const metadata = await this.metadata(url, signal);
     return {
       videoId: metadata.id,
       title: metadata.title!,
@@ -259,8 +264,8 @@ export class YtDlpTranscriptProvider {
     };
   }
 
-  async acquire(url: string, requestedLanguage?: string): Promise<CaptionAcquisition> {
-    const metadata = await this.metadata(url);
+  async acquire(url: string, requestedLanguage?: string, signal?: AbortSignal): Promise<CaptionAcquisition> {
+    const metadata = await this.metadata(url, signal);
 
     const candidates = languageCandidates(metadata, requestedLanguage);
     const creatorLanguage = chooseLanguage(metadata.subtitles, candidates);
@@ -276,9 +281,11 @@ export class YtDlpTranscriptProvider {
 
     let response: Response;
     try {
-      const signal = AbortSignal.timeout(60_000);
+      const fetchSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000);
       for (let redirects = 0; ; redirects += 1) {
-        response = await this.fetcher(captionUrl, { signal, redirect: 'manual' });
+        response = await this.fetcher(captionUrl, { signal: fetchSignal, redirect: 'manual' });
         if (response.status < 300 || response.status >= 400) break;
         if (redirects >= 3) throw new TranscriptAcquisitionError('invalid_output', 'The caption download exceeded the redirect limit.', false, 'Refresh video metadata and retry.');
         const location = response.headers.get('location');
@@ -287,6 +294,7 @@ export class YtDlpTranscriptProvider {
       }
     } catch (error) {
       if (error instanceof TranscriptAcquisitionError) throw error;
+      if (signal?.aborted) throw error;
       throw new TranscriptAcquisitionError('network', 'The selected caption track could not be downloaded.', true, 'Check the network connection and retry.');
     }
     if (!response.ok) {

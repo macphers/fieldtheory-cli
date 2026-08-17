@@ -27,12 +27,23 @@ export interface ContentAppOptions {
   onStatus?: (message: string) => void;
   syncBookmarks?: typeof syncBookmarksGraphQL;
   openBrowser?: (url: string) => void;
+  shutdownTimeoutMs?: number;
 }
 
 export interface RunningContentApp {
   origin: string;
   bootstrapUrl: string;
   close(): Promise<void>;
+}
+
+async function settleAppWork(work: Promise<unknown>[], deadline: number, onTimeout: () => void): Promise<void> {
+  const timeoutMs = Math.max(0, deadline - Date.now());
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(() => { onTimeout(); resolve(); }, timeoutMs);
+  });
+  await Promise.race([Promise.allSettled(work).then(() => undefined), timeout]);
+  if (timer) clearTimeout(timer);
 }
 
 export function openSystemBrowser(url: string, platform: NodeJS.Platform = process.platform): void {
@@ -152,18 +163,21 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
         if (timer) clearInterval(timer);
         syncController.abort(new Error('Field Theory app is shutting down.'));
         worker.stop();
-        await Promise.allSettled([workerPromise, syncPromise]);
-        await activeServer.close();
-        await repository.close();
+        const deadline = Date.now() + (options.shutdownTimeoutMs ?? 5_000);
+        await settleAppWork([workerPromise, syncPromise], deadline, () => onStatus('Shutdown deadline reached; closing local resources.'));
+        await settleAppWork([activeServer.close(), repository.close()], deadline, () => onStatus('Shutdown deadline reached while closing local resources.'));
       },
     };
   } catch (error) {
     closing = true;
     if (timer) clearInterval(timer);
     syncController.abort(new Error('Field Theory app failed to start.'));
-    await Promise.allSettled([workerPromise, syncPromise]);
-    if (server) await server.close().catch(() => undefined);
-    await repository.close().catch(() => undefined);
+    const deadline = Date.now() + (options.shutdownTimeoutMs ?? 5_000);
+    await settleAppWork([workerPromise, syncPromise], deadline, () => onStatus('Startup cleanup deadline reached; closing local resources.'));
+    await settleAppWork([
+      ...(server ? [server.close().catch(() => undefined)] : []),
+      repository.close().catch(() => undefined),
+    ], deadline, () => onStatus('Startup cleanup deadline reached while closing local resources.'));
     throw error;
   }
 }

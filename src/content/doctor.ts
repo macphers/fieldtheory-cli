@@ -15,6 +15,25 @@ export interface DependencyCheck {
   action?: string;
 }
 
+export interface ContentCapabilities {
+  captionedVideos: boolean;
+  localTranscription: boolean;
+  synthesis: boolean;
+  usable: boolean;
+}
+
+export function assessContentCapabilities(checks: DependencyCheck[]): ContentCapabilities {
+  const ready = (name: DependencyCheck['name']) => checks.find((check) => check.name === name)?.state === 'ready';
+  const base = ready('x-connectivity') && ready('yt-dlp') && ready('content-storage') && ready('loopback-security');
+  const localTranscription = base && ready('ffmpeg') && ready('whisper.cpp') && ready('whisper-model') && ready('free-disk');
+  return {
+    captionedVideos: base,
+    localTranscription,
+    synthesis: ready('synthesis-provider'),
+    usable: base,
+  };
+}
+
 export interface ContentDoctorOptions {
   runner: ProcessRunner;
   contentRoot: string;

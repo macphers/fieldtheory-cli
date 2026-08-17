@@ -66,6 +66,7 @@ export class DurableJobWorker {
 
     try {
       await handler(leased, controller.signal);
+      if (controller.signal.aborted) throw controller.signal.reason ?? new Error('Worker stopped.');
       await this.options.repository.transitionJob(leased.id, { state: 'succeeded', now: this.now().toISOString() });
     } catch (error) {
       const now = this.now().toISOString();

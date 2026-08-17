@@ -37,3 +37,25 @@ test('content app starts an authenticated loopback server and closes cleanly', a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('content app close remains bounded when sync ignores cancellation', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ft-content-app-deadline-'));
+  const previousData = process.env.FT_DATA_DIR;
+  const previousContent = process.env.FT_CONTENT_DIR;
+  process.env.FT_DATA_DIR = path.join(root, 'bookmarks');
+  process.env.FT_CONTENT_DIR = path.join(root, 'content');
+  try {
+    const app = await startContentApp({
+      open: false,
+      shutdownTimeoutMs: 30,
+      syncBookmarks: async (): Promise<SyncResult> => new Promise(() => undefined),
+    });
+    const startedAt = Date.now();
+    await app.close();
+    assert.ok(Date.now() - startedAt < 500, 'close should honor the configured shutdown deadline');
+  } finally {
+    if (previousData === undefined) delete process.env.FT_DATA_DIR; else process.env.FT_DATA_DIR = previousData;
+    if (previousContent === undefined) delete process.env.FT_CONTENT_DIR; else process.env.FT_CONTENT_DIR = previousContent;
+    await rm(root, { recursive: true, force: true });
+  }
+});

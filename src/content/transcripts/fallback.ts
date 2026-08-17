@@ -30,14 +30,14 @@ export class TranscriptFallbackPipeline {
 
   async acquire(url: string, requestedLanguage?: string, signal?: AbortSignal, allowLongTranscription = false): Promise<AcquiredTranscript> {
     try {
-      const captions = await this.options.captionProvider.acquire(url, requestedLanguage);
+      const captions = await this.options.captionProvider.acquire(url, requestedLanguage, signal);
       const artifactPath = await persistTranscriptArtifact(this.options.contentRoot, captions.transcript);
       return { ...captions, artifactPath, source: captions.captionKind };
     } catch (error) {
       if (!(error instanceof TranscriptAcquisitionError) || !['captions_unavailable', 'captions_rejected'].includes(error.code)) throw error;
     }
 
-    const metadataOnly = await this.options.captionProvider.acquireMetadata(url);
+    const metadataOnly = await this.options.captionProvider.acquireMetadata(url, signal);
     const maxDurationMs = this.options.maxLocalDurationMs ?? 2 * 60 * 60_000;
     if (!allowLongTranscription && metadataOnly.durationMs > maxDurationMs) {
       throw new TranscriptAcquisitionError('captions_unavailable', `Local transcription is limited to ${Math.round(maxDurationMs / 60000)} minutes for this item.`, false, 'Use the explicit per-item long-transcription override to continue.');
@@ -58,6 +58,9 @@ export class TranscriptFallbackPipeline {
         });
       } catch (error) {
         if (error instanceof ProcessExecutionError && error.reason === 'aborted') throw error;
+        if (error instanceof ProcessExecutionError && /ffmpeg (?:is not installed|not found)|unable to find executable.*ffmpeg/i.test(`${error.result.stderr}\n${error.result.stdout}`)) {
+          throw new TranscriptAcquisitionError('ffmpeg_missing', 'ffmpeg is not installed or is not executable.', false, 'Run `ft app doctor` for installation instructions.');
+        }
         throw classifyYtDlpFailure(error);
       }
       const transcript = await this.options.whisperProvider.transcribe(audioPath, outputPrefix, metadataOnly.durationMs, signal);

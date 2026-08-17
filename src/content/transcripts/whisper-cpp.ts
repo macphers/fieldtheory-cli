@@ -44,6 +44,9 @@ export class WhisperCppTranscriptProvider {
   constructor(private readonly options: WhisperCppOptions) {}
 
   async transcribe(audioPath: string, outputPrefix: string, durationMs: number, signal?: AbortSignal): Promise<TranscriptArtifact> {
+    if (!this.options.modelPath.trim()) {
+      throw new TranscriptAcquisitionError('whisper_model_missing', 'No whisper.cpp model is configured.', false, 'Set FT_WHISPER_MODEL to an installed model shown by `ft app doctor`.');
+    }
     try {
       await this.options.runner.run({
         command: this.options.binary,
@@ -54,6 +57,12 @@ export class WhisperCppTranscriptProvider {
       });
     } catch (error) {
       if (error instanceof ProcessExecutionError && error.reason === 'aborted') throw error;
+      if (error instanceof ProcessExecutionError && error.reason === 'spawn') {
+        throw new TranscriptAcquisitionError('whisper_binary_missing', 'whisper.cpp is not installed or is not executable.', false, 'Run `ft app doctor` for installation instructions.');
+      }
+      if (error instanceof ProcessExecutionError && /model|ggml|no such file|failed to open/i.test(`${error.result.stderr}\n${error.result.stdout}`)) {
+        throw new TranscriptAcquisitionError('whisper_model_missing', 'The configured whisper.cpp model could not be loaded.', false, 'Install the configured model or update FT_WHISPER_MODEL, then run `ft app doctor`.');
+      }
       throw new TranscriptAcquisitionError('invalid_output', 'Local transcription failed before producing a transcript.', true, 'Run `ft app doctor`, verify the model, and retry.');
     }
 

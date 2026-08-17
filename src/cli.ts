@@ -36,7 +36,7 @@ import { configureHttpProxyFromEnv } from './http-proxy.js';
 import { canonicalLibraryDir, contentDatabasePath, contentDir, dataDir, ensureDataDir, isFirstRun, migrateLegacyIdeasData, twitterBookmarksIndexPath, twitterBackfillStatePath, mdDir, bookmarkMediaDir, bookmarkMediaManifestPath } from './paths.js';
 import { runContentApp } from './content/app.js';
 import { loadClaimReviewPacket } from './content/review.js';
-import { inspectContentDependencies } from './content/doctor.js';
+import { assessContentCapabilities, inspectContentDependencies } from './content/doctor.js';
 import { NodeProcessRunner } from './content/process-runner.js';
 import { SqlJsContentRepository } from './content/sqljs-repository.js';
 import { PromptCancelledError, promptText } from './prompt.js';
@@ -855,7 +855,12 @@ export function buildCli() {
         console.log(`  ${mark} ${check.name}: ${check.state}${detail ? ` — ${detail}` : ''}`);
         if (check.action && detail !== check.action) console.log(`    ${check.action}`);
       }
-      if (checks.some((check) => check.state !== 'ready')) process.exitCode = 1;
+      const capabilities = assessContentCapabilities(checks);
+      console.log('');
+      console.log(`  Captioned videos: ${capabilities.captionedVideos ? 'ready' : 'not ready'}`);
+      console.log(`  Local transcription fallback: ${capabilities.localTranscription ? 'ready' : 'optional dependencies missing'}`);
+      console.log(`  Summaries and chat: ${capabilities.synthesis ? 'ready' : 'optional provider missing'}`);
+      if (!capabilities.usable) process.exitCode = 1;
     }));
 
   appCommand

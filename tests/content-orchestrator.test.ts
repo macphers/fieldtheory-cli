@@ -9,6 +9,7 @@ import { ContentOrchestrator } from '../src/content/orchestrator.js';
 import { SqlJsContentRepository } from '../src/content/sqljs-repository.js';
 import { DurableJobWorker } from '../src/jobs/worker.js';
 import type { BookmarkRecord } from '../src/types.js';
+import { TranscriptAcquisitionError } from '../src/content/transcripts/yt-dlp.js';
 
 test('bookmark discovery runs the durable metadata-to-summary pipeline once per canonical video', async () => {
   const page = buildKnowledgePageArtifact(structuredClone(fixture) as KnowledgePageFixtureInput);
@@ -44,4 +45,25 @@ test('bookmark discovery runs the durable metadata-to-summary pipeline once per 
     assert.equal((await repository.getSummary(page.item.canonicalId))?.overview.length, page.overview.length);
     assert.ok((await repository.listJobs(page.item.canonicalId)).every((job) => job.state === 'succeeded'));
   } finally { await repository.close(); }
+});
+
+test('durably blocks transcript jobs for missing local transcription prerequisites', async () => {
+  for (const code of ['whisper_binary_missing', 'whisper_model_missing', 'ffmpeg_missing'] as const) {
+    const page = buildKnowledgePageArtifact(structuredClone(fixture) as KnowledgePageFixtureInput);
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-orchestrator-blocked-'));
+    const repository = await SqlJsContentRepository.open(path.join(dir, 'content.sqlite'));
+    await repository.upsertItem({ ...page.item, createdAt: '2026-08-12T20:00:00.000Z', updatedAt: '2026-08-12T20:00:00.000Z' });
+    await repository.enqueueJob(page.item.canonicalId, 'transcript', code, 1, '2026-08-12T20:00:00.000Z');
+    const orchestrator = new ContentOrchestrator({
+      repository,
+      metadataProvider: { acquireMetadata: async () => { throw new Error('unused'); } },
+      transcriptPipeline: { acquire: async () => { throw new TranscriptAcquisitionError(code, 'Missing prerequisite.', false, 'Run `ft app doctor`.'); } },
+    });
+    const worker = new DurableJobWorker({ repository, workerId: 'fixture-worker', handlers: orchestrator.handlers() });
+    await worker.runOnce();
+    const [job] = await repository.listJobs(page.item.canonicalId);
+    assert.equal(job.state, 'blocked');
+    assert.equal(job.lastErrorCode, code);
+    await repository.close();
+  }
 });
