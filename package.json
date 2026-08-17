@@ -16,7 +16,7 @@
     "check:docs": "node scripts/check-docs-inventory.mjs",
     "test:browser": "npm run build:web && playwright test",
     "test:browser:run": "playwright test",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build"
