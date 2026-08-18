@@ -74,6 +74,27 @@ test('library search uses whole tokens, requires every query term, and preserves
   await repo.close();
 });
 
+test('related content ranks locally embedded transcript topics and excludes the current item', async () => {
+  const { item, transcript } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: transcript.contentHash, artifactPath: '/fixture.json', transcript, acquiredAt: NOW });
+  const relatedItem = { ...item, canonicalId: 'youtube:related-topic' as const, videoId: 'relatedTopic', canonicalUrl: 'https://www.youtube.com/watch?v=relatedTopic', title: 'How Practical Systems Work', sourceRefs: [] };
+  const unrelatedItem = { ...item, canonicalId: 'youtube:unrelated-topic' as const, videoId: 'unrelatedTopic', canonicalUrl: 'https://www.youtube.com/watch?v=unrelatedTopic', title: 'Sourdough at Home', creator: 'Bread Channel', sourceRefs: [] };
+  const relatedTranscript = normalizeTranscript('en', transcript.provenance, [{ startMs: 0, endMs: 60_000, text: 'A practical mechanism uses a concrete example to explain the central question.' }]);
+  const unrelatedTranscript = normalizeTranscript('en', transcript.provenance, [{ startMs: 0, endMs: 60_000, text: 'Mix flour water starter and salt before baking the loaf.' }]);
+  await repo.upsertItem(relatedItem); await repo.upsertItem(unrelatedItem);
+  await repo.saveTranscript({ itemId: relatedItem.canonicalId, artifactHash: relatedTranscript.contentHash, artifactPath: '/related.json', transcript: relatedTranscript, acquiredAt: NOW });
+  await repo.saveTranscript({ itemId: unrelatedItem.canonicalId, artifactHash: unrelatedTranscript.contentHash, artifactPath: '/unrelated.json', transcript: unrelatedTranscript, acquiredAt: NOW });
+
+  const hits = await repo.relatedContent(item.canonicalId);
+  assert.equal(hits[0].item.canonicalId, relatedItem.canonicalId);
+  assert.ok(hits[0].score > 0.04);
+  assert.ok(hits.every((hit) => hit.item.canonicalId !== item.canonicalId));
+  assert.ok(!hits.some((hit) => hit.item.canonicalId === unrelatedItem.canonicalId));
+  await repo.close();
+});
+
 test('upserts source provenance without duplicating canonical content', async () => {
   const { item } = domainFixture();
   const { repo } = await repository();

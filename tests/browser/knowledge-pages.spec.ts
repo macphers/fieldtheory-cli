@@ -45,6 +45,7 @@ async function mockApi(page: Page) {
     const url = new URL(request.url());
     if (url.pathname === '/api/v1/items') return json(route, { data: items, pagination: { count: items.length } });
     if (url.pathname === '/api/v1/search') return json(route, { data: [{ item: readyItem, matchType: 'transcript', excerpt: transcript[1].text, rank: -1, segmentId: transcript[1].id, startMs: transcript[1].startMs, endMs: transcript[1].endMs }], query: url.searchParams.get('q') });
+    if (url.pathname.endsWith('/related')) return json(route, { data: [{ item: processingItem, score: 0.42, sharedTerms: ['mechanism', 'concrete example'] }], method: 'local-tfidf-v1' });
     if (url.pathname === '/api/v1/session') return json(route, { csrf: 'fixture-csrf' });
     if (url.pathname.endsWith('/transcript')) return json(route, { contentHash: 'fixture', language: 'en', data: transcript, nextCursor: null });
     if (url.pathname.endsWith('/note') && request.method() === 'PUT') return json(route, { markdown: 'Remember this mechanism.', version: 1 });
@@ -190,4 +191,12 @@ test('14 library search opens the matching transcript segment', async ({ page })
   await expect(matchingSegment).toHaveClass(/search-match/);
   await expect(matchingSegment).toHaveAttribute('aria-current', 'true');
   await expect(matchingSegment).toBeFocused();
+});
+
+test('15 related items stay hidden until requested and open the selected page', async ({ page }) => {
+  await loadLibrary(page, 1280, 900); await openItem(page, readyItem.title);
+  await expect(page.getByText(processingItem.title)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Find related' }).click();
+  await page.getByRole('button', { name: new RegExp(`${processingItem.title}.*42%`) }).click();
+  await expect(page.getByRole('heading', { name: processingItem.title })).toBeVisible();
 });

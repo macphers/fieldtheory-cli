@@ -13,12 +13,14 @@ import type {
   ItemDeletionManifest,
   JobTransitionInput,
   KnowledgeActivityReport,
+  RelatedContentHit,
   StoredContentItem,
   SummaryRecord,
   SynthesisChunkRecord,
   TranscriptRecord,
   TranscriptSearchHit,
 } from './repository.js';
+import { relatedScores } from './related.js';
 
 const SCHEMA_VERSION = 1;
 
@@ -308,6 +310,30 @@ export class SqlJsContentRepository implements ContentRepository {
       return values
         .sort((left, right) => kindOrder[left.matchType] - kindOrder[right.matchType] || left.rank - right.rank || left.item.title.localeCompare(right.item.title))
         .slice(0, Math.min(100, Math.max(1, limit)));
+    });
+  }
+
+  async relatedContent(itemId: string, limit = 5): Promise<RelatedContentHit[]> {
+    return this.exclusive(() => {
+      const itemRows = rows(this.db, `SELECT i.* FROM content_items i JOIN transcripts t ON t.item_id=i.id
+        ORDER BY i.updated_at DESC,i.id`);
+      if (!itemRows.some((row) => String(row.id) === itemId)) return [];
+      const textById = new Map(itemRows.map((row) => [String(row.id), `${String(row.title)} ${String(row.title)} ${String(row.creator)}`]));
+      for (const row of rows(this.db, `SELECT s.item_id,s.overview_json,s.details_json FROM summaries s
+        JOIN transcripts t ON t.item_id=s.item_id AND t.content_hash=s.transcript_content_hash
+        WHERE s.promoted_at IS NOT NULL`)) {
+        const claims = [...JSON.parse(String(row.overview_json)), ...JSON.parse(String(row.details_json))] as Array<{ text?: unknown }>;
+        textById.set(String(row.item_id), `${textById.get(String(row.item_id)) ?? ''} ${claims.flatMap((claim) => typeof claim.text === 'string' ? [claim.text] : []).join(' ')}`);
+      }
+      for (const row of rows(this.db, 'SELECT item_id,text FROM transcript_segments ORDER BY item_id,start_ms,segment_id')) {
+        const id = String(row.item_id);
+        if (textById.has(id)) textById.set(id, `${textById.get(id)} ${String(row.text)}`);
+      }
+      const rowById = new Map(itemRows.map((row) => [String(row.id), row]));
+      return relatedScores([...textById].map(([id, text]) => ({ id, text })), itemId, limit).flatMap((score) => {
+        const row = rowById.get(score.id);
+        return row ? [{ item: itemFromRow(this.db, row), score: score.score, sharedTerms: score.sharedTerms }] : [];
+      });
     });
   }
 

@@ -14,7 +14,7 @@ npm run verify
 
 `check:docs` requires every project-owned Markdown file to be listed in [`docs/inventory.md`](inventory.md) with a purpose, status, and freshness requirement.
 
-`test:browser` builds the production web bundle and exercises 14 browser scenarios across representative desktop and mobile viewports in Chromium. It uses a dedicated strict preview port and never reuses an unrelated local server. It checks core rendering, horizontal overflow, mobile touch-target sizing and crowding, keyboard reachability, visible focus, source-tab semantics, note-conflict recovery, library/transcript search, and the library, transcript, notes, chat, processing, and blocked-state interactions. API responses are deterministic fixtures; HTTP security remains covered separately by server contract tests.
+`test:browser` builds the production web bundle and exercises 15 browser scenarios across representative desktop and mobile viewports in Chromium. It uses a dedicated strict preview port and never reuses an unrelated local server. It checks core rendering, horizontal overflow, mobile touch-target sizing and crowding, keyboard reachability, visible focus, source-tab semantics, note-conflict recovery, library/transcript search, deliberately revealed related-item discovery, and the library, transcript, notes, chat, processing, and blocked-state interactions. API responses are deterministic fixtures; HTTP security remains covered separately by server contract tests.
 
 `verify` is the single pre-push gate. It checks the documentation inventory, runs the full unit suite, builds the production server and web app, then runs the already-built browser suite.
 

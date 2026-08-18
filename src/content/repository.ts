@@ -38,6 +38,12 @@ export interface ContentSearchHit {
   endMs?: number;
 }
 
+export interface RelatedContentHit {
+  item: StoredContentItem;
+  score: number;
+  sharedTerms: string[];
+}
+
 export interface ChapterRecord {
   itemId: string;
   transcriptContentHash: string;
@@ -136,6 +142,7 @@ export interface ContentRepository {
   getTranscript(itemId: string): Promise<TranscriptRecord | null>;
   searchTranscript(itemId: string, query: string, limit?: number): Promise<TranscriptSearchHit[]>;
   searchContent(query: string, limit?: number): Promise<ContentSearchHit[]>;
+  relatedContent(itemId: string, limit?: number): Promise<RelatedContentHit[]>;
   replaceChapters(record: ChapterRecord): Promise<void>;
   getChapters(itemId: string): Promise<ChapterRecord | null>;
   saveSummary(record: SummaryRecord): Promise<void>;
