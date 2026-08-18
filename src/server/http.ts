@@ -37,7 +37,10 @@ export interface RunningContentServer {
 }
 
 function securityHeaders(response: ServerResponse): void {
-  response.setHeader('Referrer-Policy', 'no-referrer');
+  // YouTube embeds require the embedding origin (Error 153 otherwise). The
+  // bootstrap capability is removed by a redirect before this document loads,
+  // so sending only the origin cross-site does not expose its token or path.
+  response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.setHeader('X-Content-Type-Options', 'nosniff');
   response.setHeader('X-Frame-Options', 'DENY');
   response.setHeader('Cache-Control', 'no-store');
@@ -128,7 +131,7 @@ export async function startContentServer(options: ContentServerOptions): Promise
         response.statusCode = 200;
         response.setHeader('Content-Type', 'text/html; charset=utf-8');
         try { response.end(await readFile(path.join(staticDir, 'index.html'))); }
-        catch { response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Field Theory</title></head><body><main id="root"><p>Field Theory web assets are not built. Run <code>npm run build:web</code>.</p></main></body></html>'); }
+        catch { response.end('<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="strict-origin-when-cross-origin"><title>Field Theory</title></head><body><main id="root"><p>Field Theory web assets are not built. Run <code>npm run build:web</code>.</p></main></body></html>'); }
         return;
       }
       if (request.method === 'GET' && url.pathname.startsWith('/assets/')) {

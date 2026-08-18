@@ -12,8 +12,10 @@ export function formatTimestamp(milliseconds: number): string {
     : `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-export function youtubeEmbedUrl(videoId: string): string {
-  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?enablejsapi=1&rel=0`;
+export function youtubeEmbedUrl(videoId: string, origin?: string): string {
+  const params = new URLSearchParams({ enablejsapi: '1', rel: '0' });
+  if (origin) params.set('origin', origin);
+  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
 }
 
 function statusMessage(item: KnowledgeItem): string {
@@ -55,6 +57,7 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
   const [chatState, setChatState] = useState<'idle' | 'asking' | 'error'>('idle');
   const [jobState, setJobState] = useState<'idle' | 'working' | 'error'>('idle');
   const player = useRef<HTMLIFrameElement>(null);
+  const embedOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
 
   useEffect(() => { trackActivity(item.canonicalId, 'item_opened'); }, [item.canonicalId]);
 
@@ -108,7 +111,7 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
 
         <div className="player-frame">
           {embedFailed ? <div className="embed-fallback"><p>This video cannot be embedded.</p><a href={item.canonicalUrl} target="_blank" rel="noreferrer">Open on YouTube ↗</a></div>
-            : <iframe ref={player} src={youtubeEmbedUrl(item.videoId)} title={item.title} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowFullScreen onError={() => setEmbedFailed(true)} />}
+            : <iframe ref={player} src={youtubeEmbedUrl(item.videoId, embedOrigin)} title={item.title} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowFullScreen onError={() => setEmbedFailed(true)} />}
         </div>
         <div className={`status-line status-${item.status}`} role="status">
           <span>{statusMessage(item)}</span>
