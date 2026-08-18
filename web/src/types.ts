@@ -32,6 +32,16 @@ export interface TranscriptSegment {
   text: string;
 }
 
+export interface ContentSearchHit {
+  item: KnowledgeItem;
+  matchType: 'metadata' | 'summary' | 'transcript';
+  excerpt: string;
+  rank: number;
+  segmentId?: string;
+  startMs?: number;
+  endMs?: number;
+}
+
 export interface ChatAnswer {
   answer: string;
   citations: Array<{ segmentId: string; startMs: number; endMs: number }>;

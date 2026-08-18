@@ -7,6 +7,7 @@ import { assertJobTransition, projectItemStatus, type JobState, type ProcessingJ
 import type {
   ActivityEvent,
   ChapterRecord,
+  ContentSearchHit,
   ContentRepository,
   ItemNote,
   ItemDeletionManifest,
@@ -248,6 +249,65 @@ export class SqlJsContentRepository implements ContentRepository {
         FROM transcript_fts JOIN transcript_segments s ON s.segment_id=transcript_fts.segment_id
         WHERE transcript_fts MATCH ? AND transcript_fts.item_id=? ORDER BY rank LIMIT ?`, [match, itemId, limit])
         .map((row) => ({ segmentId: String(row.segment_id), startMs: Number(row.start_ms), endMs: Number(row.end_ms), text: String(row.text), rank: Number(row.rank) }));
+    });
+  }
+
+  async searchContent(query: string, limit = 20): Promise<ContentSearchHit[]> {
+    return this.exclusive(() => {
+      const tokens = (query.match(/[\p{L}\p{N}]+/gu) ?? []).map((token) => token.toLocaleLowerCase());
+      if (tokens.length === 0) return [];
+      const matchesText = (value: string) => {
+        const valueTokens = new Set((value.match(/[\p{L}\p{N}]+/gu) ?? []).map((token) => token.toLocaleLowerCase()));
+        return tokens.every((token) => valueTokens.has(token));
+      };
+      const values: ContentSearchHit[] = [];
+      const itemRows = rows(this.db, 'SELECT * FROM content_items ORDER BY updated_at DESC, id');
+      const itemRowById = new Map(itemRows.map((row) => [String(row.id), row]));
+      const itemById = new Map<string, StoredContentItem>();
+      const getItem = (id: string) => {
+        const existing = itemById.get(id);
+        if (existing) return existing;
+        const row = itemRowById.get(id);
+        if (!row) return undefined;
+        const item = itemFromRow(this.db, row);
+        itemById.set(id, item);
+        return item;
+      };
+
+      for (const row of itemRows) {
+        if (matchesText(`${String(row.title)} ${String(row.creator)}`)) {
+          const item = getItem(String(row.id));
+          if (!item) continue;
+          values.push({ item, matchType: 'metadata', excerpt: `${item.title} · ${item.creator}`, rank: -3 });
+        }
+      }
+
+      for (const row of rows(this.db, `SELECT s.item_id,s.overview_json,s.details_json
+        FROM summaries s JOIN transcripts t ON t.item_id=s.item_id AND t.content_hash=s.transcript_content_hash
+        WHERE s.promoted_at IS NOT NULL ORDER BY s.promoted_at DESC,s.id`)) {
+        const item = getItem(String(row.item_id));
+        if (!item) continue;
+        const claims = [...JSON.parse(String(row.overview_json)), ...JSON.parse(String(row.details_json))] as Array<{ text?: unknown }>;
+        const claim = claims.find((candidate) => typeof candidate.text === 'string' && matchesText(candidate.text));
+        if (claim && typeof claim.text === 'string') values.push({ item, matchType: 'summary', excerpt: claim.text, rank: -2 });
+      }
+
+      const match = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(' AND ');
+      for (const row of rows(this.db, `SELECT transcript_fts.item_id,s.segment_id,s.start_ms,s.end_ms,s.text,bm25(transcript_fts) AS rank
+        FROM transcript_fts JOIN transcript_segments s ON s.segment_id=transcript_fts.segment_id
+        WHERE transcript_fts MATCH ? ORDER BY rank LIMIT ?`, [match, Math.max(limit * 3, limit)])) {
+        const item = getItem(String(row.item_id));
+        if (!item) continue;
+        values.push({
+          item, matchType: 'transcript', excerpt: String(row.text), rank: Number(row.rank),
+          segmentId: String(row.segment_id), startMs: Number(row.start_ms), endMs: Number(row.end_ms),
+        });
+      }
+
+      const kindOrder = { metadata: 0, summary: 1, transcript: 2 } as const;
+      return values
+        .sort((left, right) => kindOrder[left.matchType] - kindOrder[right.matchType] || left.rank - right.rank || left.item.title.localeCompare(right.item.title))
+        .slice(0, Math.min(100, Math.max(1, limit)));
     });
   }
 

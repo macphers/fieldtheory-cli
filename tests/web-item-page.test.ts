@@ -60,4 +60,5 @@ test('library renders multiple selectable knowledge pages with status', () => {
   assert.match(html, /A Redacted Test Conversation/);
   assert.match(html, /Another Saved Video/);
   assert.match(html, /Preparing/);
+  assert.match(html, /Search titles, summaries, and transcripts/);
 });
