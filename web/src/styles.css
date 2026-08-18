@@ -151,21 +151,22 @@ a { color: inherit; }
 .empty-library h1 { margin: 5px 0 12px; font-size: 42px; letter-spacing: -.04em; }
 .empty-library > p:last-of-type { color: #74746c; line-height: 1.6; }
 
-.surface-shell { min-height: 100vh; margin-left: 72px; padding: 64px clamp(28px, 7vw, 104px) 110px; }
-.surface-header { max-width: 900px; margin: 0 auto 48px; display: flex; align-items: flex-start; justify-content: space-between; gap: 32px; }
+.surface-shell { min-height: 100vh; margin-left: 72px; padding: 48px clamp(28px, 6vw, 88px) 96px; }
+.surface-header { max-width: 960px; margin: 0 auto 32px; display: flex; align-items: flex-start; justify-content: space-between; gap: 32px; }
 .surface-header .eyebrow, .memory-card .eyebrow, .capture-dialog .eyebrow, .settled-empty .eyebrow, .corpus-answer .eyebrow, .editorial-list .eyebrow { margin: 0 0 7px; color: #85867d; text-transform: uppercase; letter-spacing: .12em; font-size: 11px; font-weight: 750; }
-.surface-header h1 { margin: 0 0 10px; font: 500 clamp(34px, 5vw, 55px)/1.04 Georgia, serif; letter-spacing: -.035em; }
+.surface-header h1 { margin: 0 0 10px; font: 500 clamp(32px, 4vw, 46px)/1.06 Georgia, serif; letter-spacing: -.035em; }
 .surface-header > div:first-child > p:last-child { max-width: 650px; margin: 0; color: #72736b; line-height: 1.6; }
 .surface-actions { min-width: max-content; display: flex; align-items: center; gap: 12px; color: #7a7b72; font-size: 12px; }
 .surface-actions button { min-height: 40px; border: 1px solid #d2d1c8; border-radius: 999px; background: #faf9f4; color: #44463f; padding: 7px 13px; cursor: pointer; }
 .sync-warning { color: #914f3c; }
-.memory-feed { max-width: 900px; margin: 0 auto; border-top: 1px solid #dad9d0; }
-.memory-card { padding: 32px 4px 34px; border-bottom: 1px solid #dad9d0; }
+.memory-feed { max-width: 960px; margin: 0 auto; display: grid; gap: 14px; }
+.memory-card { padding: 24px 26px 25px; border: 1px solid #dad9d0; border-radius: 16px; background: rgba(255,255,255,.2); }
 .memory-label { display: flex; justify-content: space-between; gap: 20px; color: #7d7e75; text-transform: uppercase; letter-spacing: .1em; font-size: 10px; font-weight: 720; }
 .memory-label span:last-child { text-transform: none; letter-spacing: 0; font-weight: 500; }
-.memory-card h2 { max-width: 720px; margin: 8px 0 12px; font: 500 clamp(23px, 3vw, 31px)/1.2 Georgia, serif; }
+.memory-card h2 { max-width: 760px; margin: 8px 0 10px; font: 500 clamp(22px, 2.5vw, 28px)/1.2 Georgia, serif; }
 .why-now { color: #5f6159; }
-.memory-card blockquote, .connections-list blockquote { max-width: 720px; margin: 20px 0; padding-left: 18px; border-left: 2px solid #b2b4a2; color: #494b43; font: 18px/1.6 Georgia, serif; }
+.memory-card blockquote, .connections-list blockquote { max-width: 760px; margin: 17px 0 20px; padding-left: 16px; border-left: 2px solid #b2b4a2; color: #494b43; font: 16px/1.55 Georgia, serif; }
+.memory-card cite a { color: inherit; text-underline-offset: 3px; }
 .memory-card cite, .connections-list cite { display: block; margin-top: 8px; color: #7d7e75; font: 12px/1.4 Inter, sans-serif; }
 .memory-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .memory-actions button, .connection-feedback button { min-height: 38px; border: 1px solid #d4d3ca; border-radius: 999px; background: transparent; color: #55574f; padding: 6px 11px; cursor: pointer; }

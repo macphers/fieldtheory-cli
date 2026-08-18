@@ -60,6 +60,14 @@ test('discovers links in bookmark and quoted-post fields and deduplicates by vid
   assert.deepEqual(items[0].sourceRefs.map((ref) => ref.bookmarkId), ['one', 'two']);
 });
 
+test('does not treat legacy X like-timeline imports as bookmarks', () => {
+  const items = discoverYouTubeContent([{
+    id: 'liked', tweetId: 'liked', url: 'https://x.com/example/status/1', text: '',
+    links: [`https://youtube.com/watch?v=${VIDEO_ID}`], tags: ['twitter-like'], syncedAt: '2026-08-01T00:00:00.000Z',
+  }]);
+  assert.deepEqual(items, []);
+});
+
 test('discovers bookmark and quoted media surfaces with deterministic provenance ordering', () => {
   const bookmarks: BookmarkRecord[] = [
     {

@@ -246,7 +246,7 @@ test('17 feed-backed podcasts render responsive audio and transcript controls', 
 
 test('18 Today is bounded, explainable, and opens source evidence', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 }); await mockApi(page); await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'A few useful memories' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Worth revisiting' })).toBeVisible();
   await expect(page.getByText('Why now:')).toBeVisible();
   await expect(page.locator('.memory-card')).toHaveCount(1);
   await page.getByRole('button', { name: 'Open evidence' }).click();

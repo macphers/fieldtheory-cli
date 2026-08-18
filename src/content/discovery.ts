@@ -20,6 +20,11 @@ function candidateUrls(bookmark: BookmarkRecord): string[] {
   ];
 }
 
+/** Legacy like-timeline imports share the cache format but are not bookmarks. */
+export function isUserSavedBookmark(bookmark: BookmarkRecord): boolean {
+  return !(bookmark.tags ?? []).some((tag) => tag.toLowerCase() === 'twitter-like');
+}
+
 const PODCAST_EPISODE_PATTERNS: Array<[string, RegExp]> = [
   ['serve.podhome.fm', /^\/episodepage\//],
   ['buzzsprout.com', /\/episodes?\//],
@@ -50,6 +55,7 @@ export function discoverYouTubeContent(bookmarks: BookmarkRecord[]): DiscoveredC
   const items = new Map<string, DiscoveredContentItem>();
 
   for (const bookmark of bookmarks) {
+    if (!isUserSavedBookmark(bookmark)) continue;
     const seenForBookmark = new Set<string>();
     for (const sourceUrl of candidateUrls(bookmark)) {
       const source = normalizeYouTubeUrl(sourceUrl);
@@ -83,6 +89,7 @@ export function discoverYouTubeContent(bookmarks: BookmarkRecord[]): DiscoveredC
 export function discoverArticleContent(bookmarks: BookmarkRecord[]): DiscoveredContentItem[] {
   const items = new Map<string, DiscoveredContentItem>();
   for (const bookmark of bookmarks) {
+    if (!isUserSavedBookmark(bookmark)) continue;
     const sourceText = bookmark.articleText?.trim();
     if (!sourceText) continue;
     const externalUrl = (bookmark.links ?? []).flatMap((value) => {
@@ -123,6 +130,7 @@ export function discoverArticleContent(bookmarks: BookmarkRecord[]): DiscoveredC
 export function discoverPodcastContent(bookmarks: BookmarkRecord[]): DiscoveredContentItem[] {
   const items = new Map<string, DiscoveredContentItem>();
   for (const bookmark of bookmarks) {
+    if (!isUserSavedBookmark(bookmark)) continue;
     const seenForBookmark = new Set<string>();
     for (const sourceUrl of candidateUrls(bookmark)) {
       const source = normalizePodcastUrl(sourceUrl);
