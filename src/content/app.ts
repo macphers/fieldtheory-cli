@@ -179,8 +179,11 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
       if (closing || syncPaused) return;
       const sync = options.syncBookmarks ?? syncBookmarksGraphQL;
       try {
-        const pendingSync = sync({
+      const pendingSync = sync({
         incremental: true,
+        // The app's recurring pass only checks the newest window. Historical
+        // traversal is a separate backfill concern and must not run every 15m.
+        maxPages: 3,
         maxMinutes: 5,
         signal: syncController.signal,
         onProgress: (progress) => onStatus(progress.stopReason ?? `Bookmark sync: page ${progress.page}, ${progress.newAdded} added.`),
