@@ -22,7 +22,7 @@ import type {
 } from './repository.js';
 import { relatedScores } from './related.js';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function rows(db: Database, sql: string, params: Array<string | number | null> = []): Record<string, unknown>[] {
   const result = db.exec(sql, params)[0];
@@ -53,20 +53,45 @@ function itemFromRow(db: Database, row: Record<string, unknown>): StoredContentI
   const sourceRefs = rows(db, 'SELECT bookmark_id, bookmark_url, discovered_at, source_url FROM source_refs WHERE item_id = ? ORDER BY discovered_at, bookmark_id', [String(row.id)])
     .map((ref) => ({ bookmarkId: String(ref.bookmark_id), bookmarkUrl: String(ref.bookmark_url), discoveredAt: String(ref.discovered_at), sourceUrl: String(ref.source_url) }));
   return {
-    canonicalId: String(row.id) as `youtube:${string}`, type: 'youtube', videoId: String(row.video_id),
+    canonicalId: String(row.id) as StoredContentItem['canonicalId'], type: row.type as StoredContentItem['type'],
     canonicalUrl: String(row.canonical_url), title: String(row.title), creator: String(row.creator),
     durationMs: Number(row.duration_ms), sourceRefs, createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+    ...(row.video_id ? { videoId: String(row.video_id) } : {}),
     ...(row.thumbnail_url ? { thumbnailUrl: String(row.thumbnail_url) } : {}),
     ...(row.language ? { language: String(row.language) } : {}),
     ...(row.source_chapters_json ? { creatorChapters: JSON.parse(String(row.source_chapters_json)) } : {}),
   };
 }
 
+function migrateContentItems(db: Database): void {
+  const definition = first(db, "SELECT sql FROM sqlite_master WHERE type='table' AND name='content_items'");
+  if (!definition || !String(definition.sql).includes("CHECK(type = 'youtube')")) return;
+  db.run('PRAGMA foreign_keys = OFF');
+  db.run('BEGIN IMMEDIATE');
+  try {
+    db.run(`CREATE TABLE content_items_v2 (
+      id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN ('youtube','article')), video_id TEXT UNIQUE,
+      canonical_url TEXT NOT NULL, title TEXT NOT NULL, creator TEXT NOT NULL, duration_ms INTEGER NOT NULL,
+      thumbnail_url TEXT, language TEXT, source_chapters_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`);
+    db.run(`INSERT INTO content_items_v2 SELECT id,type,video_id,canonical_url,title,creator,duration_ms,thumbnail_url,language,source_chapters_json,created_at,updated_at FROM content_items`);
+    db.run('DROP TABLE content_items');
+    db.run('ALTER TABLE content_items_v2 RENAME TO content_items');
+    db.run('COMMIT');
+  } catch (error) {
+    db.run('ROLLBACK');
+    throw error;
+  } finally {
+    db.run('PRAGMA foreign_keys = ON');
+  }
+}
+
 function initializeSchema(db: Database): void {
+  migrateContentItems(db);
   db.run('PRAGMA foreign_keys = ON');
   db.run(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   db.run(`CREATE TABLE IF NOT EXISTS content_items (
-    id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type = 'youtube'), video_id TEXT NOT NULL UNIQUE,
+    id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN ('youtube','article')), video_id TEXT UNIQUE,
     canonical_url TEXT NOT NULL, title TEXT NOT NULL, creator TEXT NOT NULL, duration_ms INTEGER NOT NULL,
     thumbnail_url TEXT, language TEXT, source_chapters_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
   )`);
@@ -192,7 +217,7 @@ export class SqlJsContentRepository implements ContentRepository {
       this.db.run(`INSERT INTO content_items(id,type,video_id,canonical_url,title,creator,duration_ms,thumbnail_url,language,source_chapters_json,created_at,updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_url=excluded.canonical_url,title=excluded.title,
         creator=excluded.creator,duration_ms=excluded.duration_ms,thumbnail_url=excluded.thumbnail_url,language=excluded.language,source_chapters_json=excluded.source_chapters_json,updated_at=excluded.updated_at`,
-      [item.canonicalId, item.type, item.videoId, item.canonicalUrl, item.title, item.creator, item.durationMs, item.thumbnailUrl ?? null, item.language ?? null, item.creatorChapters ? JSON.stringify(item.creatorChapters) : null, item.createdAt, item.updatedAt]);
+      [item.canonicalId, item.type, item.videoId ?? null, item.canonicalUrl, item.title, item.creator, item.durationMs, item.thumbnailUrl ?? null, item.language ?? null, item.creatorChapters ? JSON.stringify(item.creatorChapters) : null, item.createdAt, item.updatedAt]);
       for (const ref of item.sourceRefs) this.db.run(`INSERT OR IGNORE INTO source_refs VALUES (?,?,?,?,?)`, [item.canonicalId, ref.bookmarkId, ref.bookmarkUrl, ref.sourceUrl, ref.discoveredAt]);
     }));
   }

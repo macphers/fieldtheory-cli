@@ -67,3 +67,45 @@ test('durably blocks transcript jobs for missing local transcription prerequisit
     await repository.close();
   }
 });
+
+test('enriched X articles enter the chapters-to-summary pipeline without media tooling', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-article-orchestrator-'));
+  const repository = await SqlJsContentRepository.open(path.join(dir, 'content.sqlite'));
+  const model = {
+    provider: 'fixture',
+    generate: async () => JSON.stringify({
+      overview: [
+        { text: 'The article explains a durable idea.', citations: [{ startMs: 0, endMs: 2_000 }] },
+        { text: 'The idea is framed for long-term use.', citations: [{ startMs: 0, endMs: 2_000 }] },
+        { text: 'A practical mechanism makes the idea concrete.', citations: [{ startMs: 2_000, endMs: 4_000 }] },
+      ],
+      details: [{ text: 'A practical mechanism makes the idea concrete.', citations: [{ startMs: 2_000, endMs: 4_000 }] }],
+    }),
+    checkSupport: async () => 'supported' as const,
+  };
+  const orchestrator = new ContentOrchestrator({
+    repository,
+    metadataProvider: { acquireMetadata: async () => { throw new Error('Article discovery must not call yt-dlp metadata.'); } },
+    transcriptPipeline: { acquire: async () => { throw new Error('Article discovery must not call media transcription.'); } },
+    model,
+    now: () => new Date('2026-08-12T20:00:00.000Z'),
+  });
+  try {
+    const bookmark: BookmarkRecord = {
+      id: 'article-1', tweetId: 'article-1', url: 'https://x.com/example/article/1', text: 'Preview', syncedAt: '2026-08-12T20:00:00.000Z',
+      articleTitle: 'A Durable Idea', articleText: 'The article explains a durable idea.\n\nA practical mechanism makes the idea concrete.', authorName: 'Example Author', language: 'en',
+    };
+    assert.deepEqual(await orchestrator.discover([bookmark]), { discovered: 1, enqueued: 1 });
+    const itemId = 'article:x:article-1';
+    const item = await repository.getItem(itemId);
+    assert.equal(item?.type, 'article');
+    assert.equal(item?.videoId, undefined);
+    assert.equal((await repository.getTranscript(itemId))?.transcript.provenance.source, 'article-text');
+    const worker = new DurableJobWorker({ repository, workerId: 'article-worker', handlers: orchestrator.handlers(), now: () => new Date('2026-08-12T20:00:00.000Z') });
+    let completed = 0;
+    while (await worker.runOnce()) completed += 1;
+    assert.equal(completed, 2);
+    const jobs = await repository.listJobs(itemId);
+    assert.equal(await repository.itemStatus(itemId, ['chapters', 'summary']), 'ready', JSON.stringify(jobs));
+  } finally { await repository.close(); }
+});

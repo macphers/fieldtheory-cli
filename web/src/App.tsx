@@ -18,6 +18,10 @@ export function youtubeEmbedUrl(videoId: string, origin?: string): string {
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
 }
 
+function sourceLabel(item: KnowledgeItem): string {
+  try { return new URL(item.canonicalUrl).hostname.replace(/^www\./, ''); } catch { return item.type; }
+}
+
 function statusMessage(item: KnowledgeItem): string {
   if (item.status === 'ready') return item.language && item.language !== 'en' ? `Ready · Source transcript in ${item.language.toUpperCase()} · synthesis in English` : 'Ready · grounded in the source transcript';
   const active = item.jobs?.find((job) => ['running', 'queued', 'retry_wait'].includes(job.state));
@@ -136,13 +140,13 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
       <article className="document">
         <header className="item-header">
           <h1>{item.title}</h1>
-          <p className="source-line"><span aria-hidden="true" className="youtube-mark" /> <a href={item.canonicalUrl} target="_blank" rel="noreferrer">youtube.com/watch?v={item.videoId}</a>{item.sourceRefs[0] ? <> · saved from X</> : null}</p>
+          <p className="source-line"><span aria-hidden="true" className={item.type === 'youtube' ? 'youtube-mark' : 'article-mark'} /> <a href={item.canonicalUrl} target="_blank" rel="noreferrer">{sourceLabel(item)}</a>{item.sourceRefs[0] ? <> · saved from X</> : null}</p>
         </header>
 
-        <div className="player-frame">
+        {item.type === 'youtube' && item.videoId ? <div className="player-frame">
           {embedFailed ? <div className="embed-fallback"><p>This video cannot be embedded.</p><a href={item.canonicalUrl} target="_blank" rel="noreferrer">Open on YouTube ↗</a></div>
             : <iframe ref={player} src={youtubeEmbedUrl(item.videoId, embedOrigin)} title={item.title} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowFullScreen onError={() => setEmbedFailed(true)} />}
-        </div>
+        </div> : <div className="article-intro"><p className="eyebrow">Saved article</p><p>{Math.max(1, Math.round(item.durationMs / 60_000))} min read</p></div>}
         <div className={`status-line status-${item.status}`} role="status">
           <span>{statusMessage(item)}</span>
           {problemJob ? <span className="status-actions">
@@ -155,8 +159,8 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
 
         <section className="source-surface" aria-label="Source navigation">
           <div className="tabs" role="tablist">
-            <button ref={chapterTab} id="chapters-tab" role="tab" aria-selected={tab === 'chapters'} aria-controls="source-panel" tabIndex={tab === 'chapters' ? 0 : -1} onKeyDown={onTabKeyDown} onClick={() => selectTab('chapters')} disabled={!item.chapters?.length}>Chapters</button>
-            <button ref={transcriptTab} id="transcript-tab" role="tab" aria-selected={tab === 'transcript'} aria-controls="source-panel" tabIndex={tab === 'transcript' ? 0 : -1} onKeyDown={onTabKeyDown} onClick={() => selectTab('transcript')}>Transcript</button>
+            <button ref={chapterTab} id="chapters-tab" role="tab" aria-selected={tab === 'chapters'} aria-controls="source-panel" tabIndex={tab === 'chapters' ? 0 : -1} onKeyDown={onTabKeyDown} onClick={() => selectTab('chapters')} disabled={!item.chapters?.length}>{item.type === 'article' ? 'Sections' : 'Chapters'}</button>
+            <button ref={transcriptTab} id="transcript-tab" role="tab" aria-selected={tab === 'transcript'} aria-controls="source-panel" tabIndex={tab === 'transcript' ? 0 : -1} onKeyDown={onTabKeyDown} onClick={() => selectTab('transcript')}>{item.type === 'article' ? 'Article' : 'Transcript'}</button>
           </div>
           <div id="source-panel" className="source-list" role="tabpanel" aria-labelledby={tab === 'chapters' ? 'chapters-tab' : 'transcript-tab'}>
             {tab === 'chapters' ? item.chapters?.map((chapter) => <button className="source-row" key={`${chapter.startMs}-${chapter.label}`} onClick={() => seek(chapter.startMs)}><span>{formatTimestamp(chapter.startMs)}</span><strong>{chapter.label}</strong></button>)
@@ -187,7 +191,7 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
         {chat ? <section className={`chat-answer ${chat.refused ? 'chat-refused' : ''}`} aria-live="polite"><p className="eyebrow">Answer</p><p>{chat.answer}</p>{chat.citations.length ? <div className="chat-citations">{chat.citations.map((citation) => <TimestampButton key={citation.segmentId} milliseconds={citation.startMs} onSeek={seek} />)}</div> : null}</section> : null}
       </article>
       <form className="composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
-        <label className="sr-only" htmlFor="question">Ask about this video</label>
+        <label className="sr-only" htmlFor="question">Ask about this {item.type === 'article' ? 'article' : 'video'}</label>
         <input id="question" value={question} onChange={(event) => { setQuestion(event.target.value); setChatState('idle'); }} placeholder={chatState === 'error' ? 'Could not answer. Try again…' : 'Ask anything about this video…'} disabled={item.status !== 'ready' || chatState === 'asking'} maxLength={2000} />
         <span>{item.status === 'ready' ? chatState === 'asking' ? 'Reading transcript…' : 'Grounded in transcript' : 'Available when ready'}</span>
         <button type="submit" disabled={item.status !== 'ready' || chatState === 'asking' || !question.trim()} aria-label="Ask">↑</button>
@@ -197,7 +201,7 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
 }
 
 function EmptyLibrary() {
-  return <main className="empty-library"><p className="eyebrow">Your Library</p><h1>Bookmark a YouTube link on X.</h1><p>Field Theory will quietly prepare the transcript, chapters, and a cited reading page here.</p></main>;
+  return <main className="empty-library"><p className="eyebrow">Your Library</p><h1>Bookmark something worth understanding.</h1><p>Field Theory will quietly prepare saved YouTube videos and X articles as cited reading pages here.</p></main>;
 }
 
 export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen: (id: string, segmentId?: string) => void }) {
@@ -221,9 +225,9 @@ export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen:
   return <div className="app-shell">
     <Rail onLibrary={() => undefined} />
     <main className="library-shell">
-      <header className="library-header"><p className="eyebrow">Your Library</p><h1>Saved understanding</h1><p>Videos discovered from your X bookmarks, prepared quietly in the background.</p></header>
+      <header className="library-header"><p className="eyebrow">Your Library</p><h1>Saved understanding</h1><p>Videos and articles discovered from your X bookmarks, prepared quietly in the background.</p></header>
       <div className="library-search">
-        <label className="sr-only" htmlFor="library-search">Search saved videos</label>
+        <label className="sr-only" htmlFor="library-search">Search saved sources</label>
         <span aria-hidden="true">⌕</span>
         <input id="library-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search titles, summaries, and transcripts…" autoComplete="off" maxLength={500} />
         <span role="status" aria-live="polite">{searchState === 'searching' ? 'Searching…' : searchState === 'error' ? 'Search unavailable' : results ? `${results.length} result${results.length === 1 ? '' : 's'}` : ''}</span>

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { BookmarkRecord } from '../src/types.js';
-import { discoverYouTubeContent } from '../src/content/discovery.js';
+import { discoverArticleContent, discoverYouTubeContent } from '../src/content/discovery.js';
 import { extractUrls, normalizeYouTubeUrl } from '../src/content/youtube.js';
 
 const VIDEO_ID = 'dQw4w9WgXcQ';
@@ -87,4 +87,16 @@ test('discovers bookmark and quoted media surfaces with deterministic provenance
     '2026-08-01T00:00:00.000Z',
     '2026-08-02T00:00:00.000Z',
   ]);
+});
+
+test('discovers enriched X articles as private source documents', () => {
+  const [article] = discoverArticleContent([{
+    id: 'article-1', tweetId: 'article-1', url: 'https://x.com/example/article/1', text: 'Preview', syncedAt: '2026-08-01T00:00:00.000Z',
+    authorName: 'Example Author', language: 'en', articleTitle: 'A Durable Idea', articleText: 'First paragraph.\n\nSecond paragraph.', articleSite: 'X',
+  }]);
+  assert.equal(article.canonicalId, 'article:x:article-1');
+  assert.equal(article.type, 'article');
+  assert.equal(article.sourceTitle, 'A Durable Idea');
+  assert.equal(article.sourceText, 'First paragraph.\n\nSecond paragraph.');
+  assert.equal(article.sourceRefs[0].bookmarkId, 'article-1');
 });

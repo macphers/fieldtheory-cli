@@ -108,7 +108,7 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
     const discoverCached = async (): Promise<void> => {
       const bookmarks = await readJsonLines<BookmarkRecord>(twitterBookmarksCachePath());
       const result = await orchestrator.discover(bookmarks);
-      onStatus(`Knowledge library: ${result.discovered} YouTube item${result.discovered === 1 ? '' : 's'} discovered.`);
+      onStatus(`Knowledge library: ${result.discovered} saved source${result.discovered === 1 ? '' : 's'} discovered.`);
     };
     await discoverCached();
 

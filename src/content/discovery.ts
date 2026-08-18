@@ -52,3 +52,25 @@ export function discoverYouTubeContent(bookmarks: BookmarkRecord[]): DiscoveredC
     }))
     .sort((a, b) => a.canonicalId.localeCompare(b.canonicalId));
 }
+
+export function discoverArticleContent(bookmarks: BookmarkRecord[]): DiscoveredContentItem[] {
+  return bookmarks.flatMap((bookmark) => {
+    const sourceText = bookmark.articleText?.trim();
+    if (!sourceText) return [];
+    return [{
+      canonicalId: `article:x:${bookmark.id}` as const,
+      canonicalUrl: bookmark.url,
+      type: 'article' as const,
+      sourceText,
+      sourceTitle: bookmark.articleTitle?.trim() || bookmark.text.trim().slice(0, 120) || 'Saved X article',
+      sourceCreator: bookmark.authorName?.trim() || bookmark.authorHandle?.trim() || bookmark.articleSite?.trim() || 'Unknown author',
+      sourceLanguage: bookmark.language?.trim() || 'en',
+      sourceRefs: [{ bookmarkId: bookmark.id, bookmarkUrl: bookmark.url, discoveredAt: bookmark.bookmarkedAt ?? bookmark.syncedAt, sourceUrl: bookmark.url }],
+    }];
+  }).sort((left, right) => left.canonicalId.localeCompare(right.canonicalId));
+}
+
+export function discoverKnowledgeContent(bookmarks: BookmarkRecord[]): DiscoveredContentItem[] {
+  return [...discoverYouTubeContent(bookmarks), ...discoverArticleContent(bookmarks)]
+    .sort((left, right) => left.canonicalId.localeCompare(right.canonicalId));
+}

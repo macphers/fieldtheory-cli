@@ -8,6 +8,7 @@ import { buildKnowledgePageArtifact, normalizeTranscript, type KnowledgePageFixt
 import { SqlJsContentRepository } from '../src/content/sqljs-repository.js';
 import type { StoredContentItem } from '../src/content/repository.js';
 import { jobInputFingerprint } from '../src/jobs/state-machine.js';
+import { openDb, saveDb } from '../src/db.js';
 
 const NOW = '2026-08-12T20:00:00.000Z';
 
@@ -44,6 +45,34 @@ test('persists canonical items, source refs, transcripts, and item-scoped FTS ac
   assert.equal((await reopened.getTranscript(item.canonicalId))?.transcript.contentHash, transcript.contentHash);
   assert.equal((await reopened.listItems())[0].canonicalId, item.canonicalId);
   await reopened.close();
+});
+
+test('schema v2 preserves YouTube rows and accepts article rows without video IDs', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-content-migration-'));
+  const dbPath = path.join(dir, 'content.sqlite');
+  const legacy = await openDb(dbPath);
+  legacy.run('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  legacy.run(`CREATE TABLE content_items (
+    id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type = 'youtube'), video_id TEXT NOT NULL UNIQUE,
+    canonical_url TEXT NOT NULL, title TEXT NOT NULL, creator TEXT NOT NULL, duration_ms INTEGER NOT NULL,
+    thumbnail_url TEXT, language TEXT, source_chapters_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`);
+  legacy.run(`CREATE TABLE source_refs (
+    item_id TEXT NOT NULL REFERENCES content_items(id) ON DELETE CASCADE, bookmark_id TEXT NOT NULL,
+    bookmark_url TEXT NOT NULL, source_url TEXT NOT NULL, discovered_at TEXT NOT NULL,
+    PRIMARY KEY(item_id, bookmark_id, source_url)
+  )`);
+  legacy.run('INSERT INTO content_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', ['youtube:legacyVideo', 'youtube', 'legacyVideo', 'https://www.youtube.com/watch?v=legacyVideo', 'Legacy video', 'Creator', 60_000, null, 'en', null, NOW, NOW]);
+  legacy.run('INSERT INTO source_refs VALUES (?,?,?,?,?)', ['youtube:legacyVideo', 'bookmark-legacy', 'https://x.com/example/status/legacy', 'https://www.youtube.com/watch?v=legacyVideo', NOW]);
+  saveDb(legacy, dbPath); legacy.close();
+
+  const repo = await SqlJsContentRepository.open(dbPath);
+  assert.equal((await repo.getItem('youtube:legacyVideo'))?.videoId, 'legacyVideo');
+  assert.equal((await repo.getItem('youtube:legacyVideo'))?.sourceRefs[0].bookmarkId, 'bookmark-legacy');
+  await repo.upsertItem({ canonicalId: 'article:x:one', canonicalUrl: 'https://x.com/example/article/one', type: 'article', sourceRefs: [], title: 'Article', creator: 'Author', durationMs: 30_000, createdAt: NOW, updatedAt: NOW });
+  assert.equal((await repo.getItem('article:x:one'))?.type, 'article');
+  assert.equal((await repo.getItem('article:x:one'))?.videoId, undefined);
+  await repo.close();
 });
 
 test('library search uses whole tokens, requires every query term, and preserves true transcript hits at the limit', async () => {
