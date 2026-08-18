@@ -42,20 +42,23 @@ ft stats
 
 On first run, `ft sync` extracts your X session from your browser and downloads your bookmarks into `~/.fieldtheory/bookmarks/`.
 
-### Turn saved videos, podcasts, and X articles into knowledge pages
+### Turn saved videos, podcasts, and articles into knowledge pages
 
 ```bash
 # 1. Install the video metadata/caption tool
 brew install yt-dlp
 
-# 2. Sync X bookmarks, process linked videos, feed-backed podcasts, and enriched X articles, and open the local library
+# 2. Backfill full X Article and ordinary linked-article text
+ft sync --gaps
+
+# 3. Sync new X bookmarks, process saved sources, and open the local library
 ft app
 
-# 3. If Field Theory reports a missing prerequisite, inspect the exact capability
+# 4. If Field Theory reports a missing prerequisite, inspect the exact capability
 ft app doctor
 ```
 
-The knowledge library deduplicates YouTube and supported podcast episode links across bookmarks and imports enriched X Article text already present in the local bookmark cache. Videos prefer creator or automatic captions. Feed-backed podcast pages use publisher VTT/SRT transcripts and Podcasting 2.0 chapters when available. Video and podcast sources fall back to bounded local `whisper.cpp` transcription when needed. Every source type receives navigation, citation-grounded summaries, library search, cited item chat, related-page discovery, and local notes. The page appears progressively while background work continues.
+The knowledge library deduplicates YouTube, supported podcast episodes, and linked articles across bookmarks. It imports X Article text from the bookmark cache and ordinary linked-article enrichment from the local bookmark search index. Videos prefer creator or automatic captions. Feed-backed podcast pages use publisher VTT/SRT transcripts and Podcasting 2.0 chapters when available. Video and podcast sources fall back to bounded local `whisper.cpp` transcription when needed. Every source type receives navigation, citation-grounded summaries, library search, cited item chat, related-page discovery, and local notes. The page appears progressively while background work continues.
 
 `ft app doctor` reports three separate capabilities: captioned videos, local transcription fallback, and summaries/chat. Missing optional tools do not prevent the caption-first path. Captioned videos require only `yt-dlp` after your X bookmarks have been synced. An authenticated Claude Code or Codex CLI enables synthesis. Local fallback additionally requires `ffmpeg`, `whisper.cpp`, and an explicitly installed model:
 
@@ -159,7 +162,7 @@ The review packet includes every overview/detail claim, quoted transcript eviden
 | `ft commands new <name>` | Create a reusable portable command |
 | `ft commands validate [name]` | Check command shape and guardrails |
 | `ft install app` | Download and install the latest Field Theory Mac app from `afar1/field-releases` |
-| `ft app` | Run the private local knowledge library, sync bookmarks, and process linked YouTube videos, feed-backed podcasts, and enriched X articles |
+| `ft app` | Run the private local knowledge library, sync bookmarks, and process linked YouTube videos, feed-backed podcasts, and enriched articles |
 | `ft app doctor` | Check X cache access, media tools, model setup, disk, temp cleanup, and loopback security |
 | `ft app report` | Summarize private local opens, citation clicks, notes, questions, and revisited pages |
 | `ft app review [--output <path>]` | Create a private claim-review packet with exact cited transcript excerpts |
@@ -336,7 +339,7 @@ Session sync extracts cookies from your browser's local database. Use `ft sync -
 
 ## Security
 
-**Your data stays local.** There is no Field Theory telemetry or analytics. Sync contacts X; video knowledge pages contact YouTube for metadata/captions; podcast pages contact the saved episode page, its advertised RSS/transcript endpoints, and the audio host for playback or fallback transcription; X Article pages reuse text already saved in the local bookmark cache. The locally configured model CLI handles synthesis. Notes, transcripts, activity, and generated pages stay under `~/.fieldtheory/`.
+**Your data stays local.** There is no Field Theory telemetry or analytics. Sync contacts X; `ft sync --gaps` contacts saved linked-article pages for enrichment; video knowledge pages contact YouTube for metadata/captions; podcast pages contact the saved episode page, its advertised RSS/transcript endpoints, and the audio host for playback or fallback transcription. Article knowledge pages reuse text already saved in the local bookmark cache/index. The locally configured model CLI handles synthesis. Notes, transcripts, activity, and generated pages stay under `~/.fieldtheory/`.
 
 **The knowledge app is loopback-only.** It binds to `127.0.0.1` on a random port, exchanges a short-lived one-time launch token for an HttpOnly SameSite session, rejects forwarded and mismatched Host requests, and requires same-origin CSRF protection for mutations.
 
