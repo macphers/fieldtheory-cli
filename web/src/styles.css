@@ -83,6 +83,17 @@ a { color: inherit; }
 .synthesis { font-size: 16px; line-height: 1.65; }
 .synthesis h2 { margin-top: 32px; }
 .synthesis li { padding-left: 4px; margin-bottom: 10px; }
+.related-section { margin: 40px 0 18px; padding-top: 24px; border-top: 1px solid #deddd5; }
+.related-section > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; }
+.related-section h2 { margin: 0; font-size: 18px; }
+.related-section p { color: #7d7d74; font-size: 13px; }
+.related-section > button { min-height: 38px; border: 1px solid #d3d2c9; border-radius: 999px; background: transparent; color: #55574f; padding: 7px 13px; cursor: pointer; }
+.related-list { display: grid !important; align-items: stretch !important; gap: 0 !important; margin-top: 12px; border-top: 1px solid #e1e0d8; }
+.related-list button { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 0; border-bottom: 1px solid #e1e0d8; background: transparent; color: inherit; padding: 10px 4px; text-align: left; cursor: pointer; }
+.related-list button:hover, .related-list button:focus-visible { background: rgba(65,64,56,.035); outline: 2px solid #a5a69d; outline-offset: -2px; }
+.related-list button > span:first-child { display: grid; gap: 4px; }
+.related-list button span span, .related-list button > span:last-child { color: #7d7d74; font-size: 12px; }
+.related-empty { margin-top: 14px; }
 .timestamp { min-height: 24px; border: 0; border-radius: 999px; background: #e4e5d8; color: #6b6e5f; padding: 3px 7px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
 .chat-answer { margin: 38px 0 6px; padding: 20px 22px; border-left: 2px solid #a9ad91; background: rgba(232,233,220,.45); line-height: 1.65; }
 .chat-answer .eyebrow { margin: 0 0 6px; color: #7a7d6b; text-transform: uppercase; letter-spacing: .1em; font-size: 11px; font-weight: 750; }

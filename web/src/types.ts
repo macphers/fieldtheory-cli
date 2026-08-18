@@ -42,6 +42,12 @@ export interface ContentSearchHit {
   endMs?: number;
 }
 
+export interface RelatedContentHit {
+  item: KnowledgeItem;
+  score: number;
+  sharedTerms: string[];
+}
+
 export interface ChatAnswer {
   answer: string;
   citations: Array<{ segmentId: string; startMs: number; endMs: number }>;

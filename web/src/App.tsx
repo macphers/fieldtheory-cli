@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ApiError, allowLongTranscription, askItem, cancelJob, getItem, getTranscript, listItems, recordActivity, retryJob, saveNote, searchContent } from './api';
-import type { ChatAnswer, ContentSearchHit, KnowledgeItem, TranscriptSegment } from './types';
+import { ApiError, allowLongTranscription, askItem, cancelJob, getItem, getRelatedItems, getTranscript, listItems, recordActivity, retryJob, saveNote, searchContent } from './api';
+import type { ChatAnswer, ContentSearchHit, KnowledgeItem, RelatedContentHit, TranscriptSegment } from './types';
 
 export function formatTimestamp(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -46,7 +46,7 @@ function TimestampButton({ milliseconds, onSeek, children }: { milliseconds: num
   </button>;
 }
 
-export function ItemPage({ item, transcript, onLibrary, onRefresh, initialSegmentId }: { item: KnowledgeItem; transcript: TranscriptSegment[]; onLibrary: () => void; onRefresh?: () => Promise<void> | void; initialSegmentId?: string }) {
+export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initialSegmentId }: { item: KnowledgeItem; transcript: TranscriptSegment[]; onLibrary: () => void; onOpen: (id: string) => void; onRefresh?: () => Promise<void> | void; initialSegmentId?: string }) {
   const [tab, setTab] = useState<'chapters' | 'transcript'>(initialSegmentId ? 'transcript' : item.chapters?.length ? 'chapters' : 'transcript');
   const [note, setNote] = useState(item.note?.markdown ?? '');
   const [noteVersion, setNoteVersion] = useState<number | null>(item.note?.version ?? 0);
@@ -56,6 +56,8 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh, initialSegmen
   const [chat, setChat] = useState<ChatAnswer | null>(null);
   const [chatState, setChatState] = useState<'idle' | 'asking' | 'error'>('idle');
   const [jobState, setJobState] = useState<'idle' | 'working' | 'error'>('idle');
+  const [related, setRelated] = useState<RelatedContentHit[] | null>(null);
+  const [relatedState, setRelatedState] = useState<'idle' | 'loading' | 'error'>('idle');
   const player = useRef<HTMLIFrameElement>(null);
   const chapterTab = useRef<HTMLButtonElement>(null);
   const transcriptTab = useRef<HTMLButtonElement>(null);
@@ -63,6 +65,7 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh, initialSegmen
   const embedOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
 
   useEffect(() => { trackActivity(item.canonicalId, 'item_opened'); }, [item.canonicalId]);
+  useEffect(() => { setRelated(null); setRelatedState('idle'); }, [item.canonicalId]);
   useEffect(() => {
     if (!initialSegmentId) return;
     setTab('transcript');
@@ -170,6 +173,17 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh, initialSegmen
 
         {item.overview?.length ? <section className="synthesis"><h2>Overview</h2><ul>{item.overview.map((claim, index) => <li key={index}>{claim.text} {claim.citations.map((citation) => <TimestampButton key={citation.startMs} milliseconds={citation.startMs} onSeek={seek} />)}</li>)}</ul></section> : null}
         {item.details?.length ? <section className="synthesis"><h2>Details</h2>{item.details.map((claim, index) => <p key={index}>{claim.text} {claim.citations.map((citation) => <TimestampButton key={citation.startMs} milliseconds={citation.startMs} onSeek={seek} />)}</p>)}</section> : null}
+        <section className="related-section" aria-labelledby="related-heading">
+          <div><h2 id="related-heading">Related in your library</h2><p>Local similarity across titles, summaries, and transcripts.</p></div>
+          {related === null ? <button disabled={relatedState === 'loading'} onClick={() => {
+            setRelatedState('loading');
+            void getRelatedItems(item.canonicalId).then((hits) => { setRelated(hits); setRelatedState('idle'); }).catch(() => setRelatedState('error'));
+          }}>{relatedState === 'loading' ? 'Finding…' : relatedState === 'error' ? 'Try again' : 'Find related'}</button> : related.length ? <div className="related-list">
+            {related.map((hit) => <button key={hit.item.canonicalId} onClick={() => onOpen(hit.item.canonicalId)}>
+              <span><strong>{hit.item.title}</strong><span>{hit.item.creator}</span></span><span>{Math.round(hit.score * 100)}%</span>
+            </button>)}
+          </div> : <p className="related-empty">No strong connections yet. A few more prepared items will make this useful.</p>}
+        </section>
         {chat ? <section className={`chat-answer ${chat.refused ? 'chat-refused' : ''}`} aria-live="polite"><p className="eyebrow">Answer</p><p>{chat.answer}</p>{chat.citations.length ? <div className="chat-citations">{chat.citations.map((citation) => <TimestampButton key={citation.segmentId} milliseconds={citation.startMs} onSeek={seek} />)}</div> : null}</section> : null}
       </article>
       <form className="composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
@@ -269,7 +283,7 @@ export default function App() {
   if (items.length === 0) return <EmptyLibrary />;
   if (showLibrary) return <LibraryPage items={items} onOpen={(id, segmentId) => void openItem(id, segmentId)} />;
   if (!selected) return <main className="empty-library" aria-busy="true"><p>Preparing the page…</p></main>;
-  return <ItemPage item={selected} transcript={transcript} initialSegmentId={initialSegmentId} onLibrary={() => { setInitialSegmentId(undefined); setShowLibrary(true); void loadLibrary(); }} onRefresh={async () => {
+  return <ItemPage item={selected} transcript={transcript} initialSegmentId={initialSegmentId} onOpen={(id) => void openItem(id)} onLibrary={() => { setInitialSegmentId(undefined); setShowLibrary(true); void loadLibrary(); }} onRefresh={async () => {
     setSelected(await getItem(selected.canonicalId));
     setTranscript(await getTranscript(selected.canonicalId));
   }} />;

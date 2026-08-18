@@ -191,6 +191,15 @@ export async function startContentServer(options: ContentServerOptions): Promise
         const data = record.transcript.segments.slice(cursor, cursor + pageSize);
         return json(response, 200, { contentHash: record.transcript.contentHash, language: record.transcript.language, data, nextCursor: cursor + data.length < record.transcript.segments.length ? cursor + data.length : null });
       }
+      const relatedItemId = pathItemId(url.pathname, 'related');
+      if (request.method === 'GET' && relatedItemId) {
+        const limit = integerQuery(url.searchParams.get('limit'), 5, 1, 20);
+        if (limit === null) return apiError(response, 400, { code: 'invalid_related_limit', message: 'Related-item limit must be an integer from 1 to 20.', retryable: false, action: 'Use an integer limit between 1 and 20.' });
+        if (!await options.repository.getItem(relatedItemId)) return apiError(response, 404, { code: 'item_not_found', message: 'The requested content item does not exist.', retryable: false, action: 'Return to the library and select another item.' });
+        const hits = await options.repository.relatedContent(relatedItemId, limit);
+        const data = await Promise.all(hits.map(async (hit) => ({ ...hit, item: { ...hit.item, status: await options.repository.itemStatus(hit.item.canonicalId, REQUIRED_STAGES) } })));
+        return json(response, 200, { data, method: 'local-tfidf-v1' });
+      }
       const noteItemId = pathItemId(url.pathname, 'note');
       if (request.method === 'PUT' && noteItemId) {
         const body = await readJson(request) as { markdown?: unknown; expectedVersion?: unknown };

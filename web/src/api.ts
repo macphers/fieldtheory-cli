@@ -1,4 +1,4 @@
-import type { ChatAnswer, ContentSearchHit, KnowledgeItem, TranscriptSegment } from './types';
+import type { ChatAnswer, ContentSearchHit, KnowledgeItem, RelatedContentHit, TranscriptSegment } from './types';
 
 let csrfToken: string | null = null;
 
@@ -41,6 +41,11 @@ export async function searchContent(query: string, limit = 20, signal?: AbortSig
 
 export async function getItem(id: string): Promise<KnowledgeItem> {
   return responseJson(await fetch(`/api/v1/items/${encodeURIComponent(id)}`, { credentials: 'same-origin' }));
+}
+
+export async function getRelatedItems(id: string, limit = 5): Promise<RelatedContentHit[]> {
+  const response = await fetch(`/api/v1/items/${encodeURIComponent(id)}/related?limit=${limit}`, { credentials: 'same-origin' });
+  return (await responseJson<{ data: RelatedContentHit[] }>(response)).data;
 }
 
 export async function getTranscript(id: string): Promise<TranscriptSegment[]> {
