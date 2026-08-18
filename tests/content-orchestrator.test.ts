@@ -4,7 +4,7 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import fixture from './fixtures/knowledge-page-youtube.json' with { type: 'json' };
-import { buildKnowledgePageArtifact, type KnowledgePageFixtureInput } from '../src/content/knowledge-page.js';
+import { buildKnowledgePageArtifact, normalizeTranscript, type KnowledgePageFixtureInput } from '../src/content/knowledge-page.js';
 import { ContentOrchestrator } from '../src/content/orchestrator.js';
 import { SqlJsContentRepository } from '../src/content/sqljs-repository.js';
 import { DurableJobWorker } from '../src/jobs/worker.js';
@@ -107,5 +107,54 @@ test('enriched X articles enter the chapters-to-summary pipeline without media t
     assert.equal(completed, 2);
     const jobs = await repository.listJobs(itemId);
     assert.equal(await repository.itemStatus(itemId, ['chapters', 'summary']), 'ready', JSON.stringify(jobs));
+  } finally { await repository.close(); }
+});
+
+test('feed-backed podcasts run metadata, publisher transcript, chapters, and summary stages', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-podcast-orchestrator-'));
+  const repository = await SqlJsContentRepository.open(path.join(dir, 'content.sqlite'));
+  const episodeUrl = 'https://serve.podhome.fm/episodepage/FixtureShow/episode-one';
+  const transcript = normalizeTranscript('en', { provider: 'podcast-rss', source: 'publisher-transcript' }, [
+    { startMs: 0, endMs: 60_000, text: 'The episode introduces a durable question and explains why it matters.' },
+    { startMs: 60_000, endMs: 120_000, text: 'The guest describes a practical mechanism with a concrete example.' },
+    { startMs: 120_000, endMs: 180_000, text: 'The host summarizes the tradeoff and proposes a next step.' },
+  ]);
+  const media = { title: 'Episode One', creator: 'Fixture Host', durationMs: 180_000, mediaUrl: 'https://cdn.example/episode-one.mp3', language: 'en', creatorChapters: [{ startMs: 0, endMs: 180_000, label: 'Episode One', source: 'creator' as const }] };
+  const model = {
+    provider: 'fixture',
+    generate: async () => JSON.stringify({
+      overview: [
+        { text: 'The episode introduces a durable question.', citations: [{ startMs: 0, endMs: 60_000 }] },
+        { text: 'A practical mechanism makes the idea concrete.', citations: [{ startMs: 60_000, endMs: 120_000 }] },
+        { text: 'The conclusion proposes a next step.', citations: [{ startMs: 120_000, endMs: 180_000 }] },
+      ],
+      details: [{ text: 'The practical mechanism is explained with an example.', citations: [{ startMs: 60_000, endMs: 120_000 }] }],
+    }),
+    checkSupport: async () => 'supported' as const,
+  };
+  let videoCalls = 0;
+  const orchestrator = new ContentOrchestrator({
+    repository,
+    metadataProvider: { acquireMetadata: async () => { videoCalls += 1; throw new Error('Podcast metadata must not use the YouTube provider.'); } },
+    transcriptPipeline: { acquire: async () => { videoCalls += 1; throw new Error('Podcast transcripts must not use the YouTube pipeline.'); } },
+    podcastPipeline: {
+      acquireMetadata: async () => media,
+      acquire: async () => ({ media, transcript, artifactPath: path.join(dir, 'podcast.json'), source: 'publisher-transcript' as const }),
+    },
+    model,
+    now: () => new Date('2026-08-12T20:00:00.000Z'),
+  });
+  try {
+    const bookmark: BookmarkRecord = { id: 'podcast-1', tweetId: 'podcast-1', url: 'https://x.com/example/status/1', text: `Listen ${episodeUrl}`, links: [episodeUrl], syncedAt: '2026-08-12T20:00:00.000Z' };
+    assert.deepEqual(await orchestrator.discover([bookmark]), { discovered: 1, enqueued: 1 });
+    const [item] = await repository.listItems();
+    const worker = new DurableJobWorker({ repository, workerId: 'podcast-worker', handlers: orchestrator.handlers(), now: () => new Date('2026-08-12T20:00:00.000Z') });
+    let completed = 0;
+    while (await worker.runOnce()) completed += 1;
+    assert.equal(completed, 4);
+    assert.equal(videoCalls, 0);
+    assert.equal((await repository.getItem(item.canonicalId))?.mediaUrl, media.mediaUrl);
+    assert.equal((await repository.getTranscript(item.canonicalId))?.transcript.provenance.source, 'publisher-transcript');
+    assert.equal(await repository.itemStatus(item.canonicalId, ['metadata', 'transcript', 'chapters', 'summary']), 'ready');
   } finally { await repository.close(); }
 });

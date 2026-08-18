@@ -37,7 +37,12 @@ const articleItem = {
   sourceRefs: [{ ...sourceRefs[0], sourceUrl: 'https://x.com/example/article/fixtureArticle' }],
   chapters: [{ startMs: 0, endMs: 180_000, label: 'The central idea', source: 'creator' }], overview: readyItem.overview, details: readyItem.details,
 };
-const items = [readyItem, articleItem, processingItem, blockedItem];
+const podcastItem = {
+  ...baseItem, type: 'podcast', canonicalId: 'podcast:fixtureEpisode', canonicalUrl: 'https://serve.podhome.fm/episodepage/FixtureShow/episode-one', mediaUrl: 'https://cdn.example/episode-one.mp3', title: 'A Saved Podcast About Agency', creator: 'Fixture Host', durationMs: 3_900_000, status: 'ready', jobs: [],
+  sourceRefs: [{ ...sourceRefs[0], sourceUrl: 'https://serve.podhome.fm/episodepage/FixtureShow/episode-one' }],
+  chapters: readyItem.chapters, overview: readyItem.overview, details: readyItem.details,
+};
+const items = [readyItem, articleItem, podcastItem, processingItem, blockedItem];
 
 async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -45,6 +50,7 @@ async function json(route: Route, body: unknown, status = 200) {
 
 async function mockApi(page: Page) {
   await page.route('https://www.youtube-nocookie.com/**', (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Fixture player</title>' }));
+  await page.route('https://cdn.example/**', (route) => route.fulfill({ status: 200, contentType: 'audio/mpeg', body: '' }));
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -215,4 +221,15 @@ test('16 enriched X articles render as reading pages without a video player', as
   await expect(page.getByTitle(articleItem.title)).toHaveCount(0);
   await expect(page.getByLabel('Ask about this article')).toBeEnabled();
   await expectNoHorizontalOverflow(page);
+});
+
+test('17 feed-backed podcasts render responsive audio and transcript controls', async ({ page }) => {
+  await loadLibrary(page, 390, 844); await openItem(page, podcastItem.title);
+  await expect(page.getByText('Saved podcast', { exact: true })).toBeVisible();
+  await expect(page.getByText('65 min')).toBeVisible();
+  await expect(page.locator('audio[controls]')).toHaveAttribute('src', podcastItem.mediaUrl);
+  await expect(page.getByRole('tab', { name: 'Chapters' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Transcript' })).toBeVisible();
+  await expect(page.getByLabel('Ask about this podcast')).toBeEnabled();
+  await expectMobileTargets(page); await expectNoHorizontalOverflow(page);
 });

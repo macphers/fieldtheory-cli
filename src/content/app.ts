@@ -15,6 +15,7 @@ import { SqlJsContentRepository } from './sqljs-repository.js';
 import { TranscriptFallbackPipeline } from './transcripts/fallback.js';
 import { WhisperCppTranscriptProvider } from './transcripts/whisper-cpp.js';
 import { YtDlpTranscriptProvider } from './transcripts/yt-dlp.js';
+import { PodcastTranscriptPipeline } from './transcripts/podcast.js';
 import { startContentServer, type RunningContentServer } from '../server/http.js';
 import { cleanupOrphanedTempFiles } from './temp-cleanup.js';
 
@@ -102,7 +103,14 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
       tempRoot: contentTempDir(),
       ytDlpBinary,
     });
-    const orchestrator = new ContentOrchestrator({ repository, metadataProvider: captionProvider, transcriptPipeline, model });
+    const podcastPipeline = new PodcastTranscriptPipeline({
+      runner,
+      whisperProvider,
+      contentRoot: contentDir(),
+      tempRoot: contentTempDir(),
+      ffmpegBinary: env.FT_FFMPEG_PATH ?? 'ffmpeg',
+    });
+    const orchestrator = new ContentOrchestrator({ repository, metadataProvider: captionProvider, transcriptPipeline, podcastPipeline, model });
     const worker = new DurableJobWorker({ repository, workerId: `app-${process.pid}-${randomUUID()}`, handlers: orchestrator.handlers() });
 
     const discoverCached = async (): Promise<void> => {

@@ -8,9 +8,10 @@ export interface SourceRef {
 }
 
 export interface KnowledgeItem {
-  type: 'youtube' | 'article';
+  type: 'youtube' | 'article' | 'podcast';
   canonicalId: string;
   videoId?: string;
+  mediaUrl?: string;
   canonicalUrl: string;
   title: string;
   creator: string;
