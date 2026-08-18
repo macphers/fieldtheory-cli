@@ -89,6 +89,13 @@ test('serves items, paginated transcripts, optimistic notes, jobs, and retry thr
     assert.equal(transcriptBody.data.length, 1);
     assert.equal(transcriptBody.nextCursor, 1);
     assert.equal((await fetch(`${server.origin}/api/v1/items?limit=not-a-number`, { headers })).status, 400);
+    const search = await fetch(`${server.origin}/api/v1/search?q=practical%20mechanism`, { headers });
+    assert.equal(search.status, 200);
+    const searchBody = await search.json() as { data: Array<{ item: { canonicalId: string }; matchType: string; startMs?: number }> };
+    assert.equal(searchBody.data[0].item.canonicalId, item.canonicalId);
+    assert.equal(searchBody.data[0].matchType, 'transcript');
+    assert.equal(searchBody.data[0].startMs, 60000);
+    assert.equal((await fetch(`${server.origin}/api/v1/search?q=`, { headers })).status, 400);
     assert.equal((await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/transcript?cursor=-1`, { headers })).status, 400);
 
     const mutationHeaders = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };

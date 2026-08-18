@@ -44,6 +44,7 @@ async function mockApi(page: Page) {
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === '/api/v1/items') return json(route, { data: items, pagination: { count: items.length } });
+    if (url.pathname === '/api/v1/search') return json(route, { data: [{ item: readyItem, matchType: 'transcript', excerpt: transcript[1].text, rank: -1, segmentId: transcript[1].id, startMs: transcript[1].startMs, endMs: transcript[1].endMs }], query: url.searchParams.get('q') });
     if (url.pathname === '/api/v1/session') return json(route, { csrf: 'fixture-csrf' });
     if (url.pathname.endsWith('/transcript')) return json(route, { contentHash: 'fixture', language: 'en', data: transcript, nextCursor: null });
     if (url.pathname.endsWith('/note') && request.method() === 'PUT') return json(route, { markdown: 'Remember this mechanism.', version: 1 });
@@ -176,4 +177,15 @@ test('13 note conflicts preserve the draft and explain recovery', async ({ page 
   await page.getByRole('button', { name: 'Save note' }).click();
   await expect(page.getByText(/A newer note exists.*draft is preserved/)).toBeVisible();
   await expect(note).toHaveValue('Keep this unsaved draft.');
+});
+
+test('14 library search opens the matching transcript segment', async ({ page }) => {
+  await loadLibrary(page, 1280, 900);
+  await page.getByLabel('Search saved videos').fill('mechanism');
+  const result = page.getByRole('button', { name: /1:00.*A Prepared Test Conversation.*practical mechanism/ });
+  await expect(result).toBeVisible();
+  await result.click();
+  await expect(page.getByRole('tab', { name: 'Transcript' })).toHaveAttribute('aria-selected', 'true');
+  const matchingSegment = page.getByRole('button', { name: /1:00.*practical mechanism/ });
+  await expect(matchingSegment).toHaveClass(/search-match/);
 });

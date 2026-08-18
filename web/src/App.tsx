@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ApiError, allowLongTranscription, askItem, cancelJob, getItem, getTranscript, listItems, recordActivity, retryJob, saveNote } from './api';
-import type { ChatAnswer, KnowledgeItem, TranscriptSegment } from './types';
+import { ApiError, allowLongTranscription, askItem, cancelJob, getItem, getTranscript, listItems, recordActivity, retryJob, saveNote, searchContent } from './api';
+import type { ChatAnswer, ContentSearchHit, KnowledgeItem, TranscriptSegment } from './types';
 
 export function formatTimestamp(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -46,8 +46,8 @@ function TimestampButton({ milliseconds, onSeek, children }: { milliseconds: num
   </button>;
 }
 
-export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: KnowledgeItem; transcript: TranscriptSegment[]; onLibrary: () => void; onRefresh?: () => Promise<void> | void }) {
-  const [tab, setTab] = useState<'chapters' | 'transcript'>(item.chapters?.length ? 'chapters' : 'transcript');
+export function ItemPage({ item, transcript, onLibrary, onRefresh, initialSegmentId }: { item: KnowledgeItem; transcript: TranscriptSegment[]; onLibrary: () => void; onRefresh?: () => Promise<void> | void; initialSegmentId?: string }) {
+  const [tab, setTab] = useState<'chapters' | 'transcript'>(initialSegmentId ? 'transcript' : item.chapters?.length ? 'chapters' : 'transcript');
   const [note, setNote] = useState(item.note?.markdown ?? '');
   const [noteVersion, setNoteVersion] = useState<number | null>(item.note?.version ?? 0);
   const [noteState, setNoteState] = useState<'idle' | 'saving' | 'saved' | 'conflict' | 'error'>('idle');
@@ -59,9 +59,16 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
   const player = useRef<HTMLIFrameElement>(null);
   const chapterTab = useRef<HTMLButtonElement>(null);
   const transcriptTab = useRef<HTMLButtonElement>(null);
+  const initialSegment = useRef<HTMLButtonElement>(null);
   const embedOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
 
   useEffect(() => { trackActivity(item.canonicalId, 'item_opened'); }, [item.canonicalId]);
+  useEffect(() => {
+    if (!initialSegmentId) return;
+    setTab('transcript');
+    const frame = window.requestAnimationFrame(() => initialSegment.current?.scrollIntoView({ block: 'center' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialSegmentId]);
 
   const seek = (milliseconds: number) => {
     player.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [milliseconds / 1000, true] }), 'https://www.youtube-nocookie.com');
@@ -147,7 +154,7 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
           </div>
           <div id="source-panel" className="source-list" role="tabpanel" aria-labelledby={tab === 'chapters' ? 'chapters-tab' : 'transcript-tab'}>
             {tab === 'chapters' ? item.chapters?.map((chapter) => <button className="source-row" key={`${chapter.startMs}-${chapter.label}`} onClick={() => seek(chapter.startMs)}><span>{formatTimestamp(chapter.startMs)}</span><strong>{chapter.label}</strong></button>)
-              : transcript.length ? transcript.map((segment) => <button className="source-row transcript-row" key={segment.id} onClick={() => seek(segment.startMs)}><span>{formatTimestamp(segment.startMs)}</span><span>{segment.text}</span></button>)
+              : transcript.length ? transcript.map((segment) => <button ref={segment.id === initialSegmentId ? initialSegment : undefined} className={`source-row transcript-row${segment.id === initialSegmentId ? ' search-match' : ''}`} key={segment.id} onClick={() => seek(segment.startMs)}><span>{formatTimestamp(segment.startMs)}</span><span>{segment.text}</span></button>)
                 : <p className="empty-source">The transcript will appear here as processing completes.</p>}
           </div>
         </section>
@@ -176,18 +183,46 @@ function EmptyLibrary() {
   return <main className="empty-library"><p className="eyebrow">Your Library</p><h1>Bookmark a YouTube link on X.</h1><p>Field Theory will quietly prepare the transcript, chapters, and a cited reading page here.</p></main>;
 }
 
-export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen: (id: string) => void }) {
+export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen: (id: string, segmentId?: string) => void }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<ContentSearchHit[] | null>(null);
+  const [searchState, setSearchState] = useState<'idle' | 'searching' | 'error'>('idle');
+  useEffect(() => {
+    const value = query.trim();
+    if (value.length < 2) { setResults(null); setSearchState('idle'); return; }
+    const controller = new AbortController();
+    setSearchState('searching');
+    const timer = window.setTimeout(() => {
+      void searchContent(value).then((hits) => {
+        if (controller.signal.aborted) return;
+        setResults(hits); setSearchState('idle');
+      }).catch(() => { if (!controller.signal.aborted) setSearchState('error'); });
+    }, 180);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [query]);
   return <div className="app-shell">
     <Rail onLibrary={() => undefined} />
     <main className="library-shell">
       <header className="library-header"><p className="eyebrow">Your Library</p><h1>Saved understanding</h1><p>Videos discovered from your X bookmarks, prepared quietly in the background.</p></header>
-      <section className="library-list" aria-label="Knowledge pages">
+      <div className="library-search">
+        <label className="sr-only" htmlFor="library-search">Search saved videos</label>
+        <span aria-hidden="true">⌕</span>
+        <input id="library-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search titles, summaries, and transcripts…" autoComplete="off" maxLength={500} />
+        <span role="status" aria-live="polite">{searchState === 'searching' ? 'Searching…' : searchState === 'error' ? 'Search unavailable' : results ? `${results.length} result${results.length === 1 ? '' : 's'}` : ''}</span>
+      </div>
+      {results ? <section className="search-results" aria-label="Search results">
+        {results.length ? results.map((hit, index) => <button key={`${hit.item.canonicalId}-${hit.segmentId ?? hit.matchType}-${index}`} className="search-result" onClick={() => onOpen(hit.item.canonicalId, hit.segmentId)}>
+          <span className="search-result-type">{hit.matchType === 'transcript' && hit.startMs !== undefined ? formatTimestamp(hit.startMs) : hit.matchType}</span>
+          <span><strong>{hit.item.title}</strong><span>{hit.excerpt}</span></span>
+          <span aria-hidden="true">→</span>
+        </button>) : <p className="search-empty">Nothing in your saved library matches “{query.trim()}”.</p>}
+      </section> : <section className="library-list" aria-label="Knowledge pages">
         {items.map((item) => <button key={item.canonicalId} className="library-item" onClick={() => onOpen(item.canonicalId)}>
           {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" loading="lazy" /> : <span className="library-placeholder" aria-hidden="true">▶</span>}
           <span className="library-copy"><strong>{item.title}</strong><span>{item.creator}</span></span>
           <span className={`library-status status-${item.status}`}>{item.status === 'ready' ? 'Ready' : item.status === 'processing' ? 'Preparing…' : item.status}</span>
         </button>)}
-      </section>
+      </section>}
     </main>
   </div>;
 }
@@ -198,6 +233,7 @@ export default function App() {
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showLibrary, setShowLibrary] = useState(true);
+  const [initialSegmentId, setInitialSegmentId] = useState<string | undefined>();
 
   const loadLibrary = async () => {
     setError(null);
@@ -206,11 +242,11 @@ export default function App() {
       setItems(values);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
-  const openItem = async (id: string) => {
+  const openItem = async (id: string, segmentId?: string) => {
     setError(null);
     try {
       const item = await getItem(id);
-      setSelected(item); setTranscript(await getTranscript(id)); setShowLibrary(false);
+      setSelected(item); setTranscript(await getTranscript(id)); setInitialSegmentId(segmentId); setShowLibrary(false);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
   useEffect(() => { void loadLibrary(); }, []);
@@ -227,9 +263,9 @@ export default function App() {
   if (error) return <main className="empty-library"><p className="eyebrow">Field Theory</p><h1>Couldn’t open the library.</h1><p>{error}</p><button onClick={() => void loadLibrary()}>Try again</button></main>;
   if (items === null) return <main className="empty-library" aria-busy="true"><p>Opening your library…</p></main>;
   if (items.length === 0) return <EmptyLibrary />;
-  if (showLibrary) return <LibraryPage items={items} onOpen={(id) => void openItem(id)} />;
+  if (showLibrary) return <LibraryPage items={items} onOpen={(id, segmentId) => void openItem(id, segmentId)} />;
   if (!selected) return <main className="empty-library" aria-busy="true"><p>Preparing the page…</p></main>;
-  return <ItemPage item={selected} transcript={transcript} onLibrary={() => { setShowLibrary(true); void loadLibrary(); }} onRefresh={async () => {
+  return <ItemPage item={selected} transcript={transcript} initialSegmentId={initialSegmentId} onLibrary={() => { setInitialSegmentId(undefined); setShowLibrary(true); void loadLibrary(); }} onRefresh={async () => {
     setSelected(await getItem(selected.canonicalId));
     setTranscript(await getTranscript(selected.canonicalId));
   }} />;

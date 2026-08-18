@@ -155,6 +155,22 @@ export async function startContentServer(options: ContentServerOptions): Promise
         const data = await Promise.all(items.map(async (item) => ({ ...item, status: await options.repository.itemStatus(item.canonicalId, REQUIRED_STAGES) })));
         return json(response, 200, { data, pagination: { limit, offset, count: data.length } });
       }
+      if (request.method === 'GET' && url.pathname === '/api/v1/search') {
+        const query = url.searchParams.get('q')?.trim() ?? '';
+        const limit = integerQuery(url.searchParams.get('limit'), 20, 1, 100);
+        if (!query || query.length > 500 || limit === null) return apiError(response, 400, { code: 'invalid_search', message: 'Search requires a query up to 500 characters and an integer limit.', retryable: false, action: 'Enter a shorter search query.' });
+        const hits = await options.repository.searchContent(query, limit);
+        const statuses = new Map<string, Promise<Awaited<ReturnType<ContentRepository['itemStatus']>>>>();
+        const data = await Promise.all(hits.map(async (hit) => {
+          let status = statuses.get(hit.item.canonicalId);
+          if (!status) {
+            status = options.repository.itemStatus(hit.item.canonicalId, REQUIRED_STAGES);
+            statuses.set(hit.item.canonicalId, status);
+          }
+          return { ...hit, item: { ...hit.item, status: await status } };
+        }));
+        return json(response, 200, { data, query });
+      }
       const itemId = pathItemId(url.pathname);
       if (request.method === 'GET' && itemId) {
         const item = await options.repository.getItem(itemId);

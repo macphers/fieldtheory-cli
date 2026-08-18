@@ -28,6 +28,16 @@ export interface TranscriptSearchHit {
   rank: number;
 }
 
+export interface ContentSearchHit {
+  item: StoredContentItem;
+  matchType: 'metadata' | 'summary' | 'transcript';
+  excerpt: string;
+  rank: number;
+  segmentId?: string;
+  startMs?: number;
+  endMs?: number;
+}
+
 export interface ChapterRecord {
   itemId: string;
   transcriptContentHash: string;
@@ -125,6 +135,7 @@ export interface ContentRepository {
   saveTranscript(record: TranscriptRecord): Promise<void>;
   getTranscript(itemId: string): Promise<TranscriptRecord | null>;
   searchTranscript(itemId: string, query: string, limit?: number): Promise<TranscriptSearchHit[]>;
+  searchContent(query: string, limit?: number): Promise<ContentSearchHit[]>;
   replaceChapters(record: ChapterRecord): Promise<void>;
   getChapters(itemId: string): Promise<ChapterRecord | null>;
   saveSummary(record: SummaryRecord): Promise<void>;

@@ -31,6 +31,13 @@ test('persists canonical items, source refs, transcripts, and item-scoped FTS ac
   await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: transcript.contentHash, artifactPath: `/artifacts/${transcript.contentHash}.json`, transcript, acquiredAt: NOW });
   assert.equal((await repo.getItem(item.canonicalId))?.sourceRefs.length, 1);
   assert.equal((await repo.searchTranscript(item.canonicalId, 'practical mechanism'))[0].startMs, 60000);
+  const transcriptHit = (await repo.searchContent('practical mechanism'))[0];
+  assert.equal(transcriptHit.matchType, 'transcript');
+  assert.equal(transcriptHit.item.canonicalId, item.canonicalId);
+  assert.equal(transcriptHit.startMs, 60000);
+  const metadataHit = (await repo.searchContent(item.title))[0];
+  assert.equal(metadataHit.matchType, 'metadata');
+  assert.equal(metadataHit.item.title, item.title);
   await repo.close();
 
   const reopened = await SqlJsContentRepository.open(dbPath);
@@ -75,6 +82,7 @@ test('promotes only chapters and summaries grounded in the current transcript', 
   await repo.saveSummary({ itemId: item.canonicalId, transcriptContentHash: transcript.contentHash, chaptersArtifactHash: 'chapters-hash', overview: page.overview, details: page.details, provider: 'fixture', promptVersion: 1, artifactHash: 'summary-hash', validationState: 'supported', createdAt: NOW, promotedAt: NOW });
   assert.equal((await repo.getChapters(item.canonicalId))?.chapters.length, page.chapters.length);
   assert.equal((await repo.getSummary(item.canonicalId))?.overview.length, page.overview.length);
+  assert.ok((await repo.searchContent(page.overview[0].text)).some((hit) => hit.matchType === 'summary' && hit.item.canonicalId === item.canonicalId));
   await assert.rejects(repo.saveSummary({ itemId: item.canonicalId, transcriptContentHash: 'stale', overview: page.overview, details: page.details, provider: 'fixture', promptVersion: 1, artifactHash: 'stale-summary', validationState: 'supported', createdAt: NOW, promotedAt: NOW }), /current transcript/);
   await repo.close();
 });

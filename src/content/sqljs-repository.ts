@@ -7,6 +7,7 @@ import { assertJobTransition, projectItemStatus, type JobState, type ProcessingJ
 import type {
   ActivityEvent,
   ChapterRecord,
+  ContentSearchHit,
   ContentRepository,
   ItemNote,
   ItemDeletionManifest,
@@ -248,6 +249,52 @@ export class SqlJsContentRepository implements ContentRepository {
         FROM transcript_fts JOIN transcript_segments s ON s.segment_id=transcript_fts.segment_id
         WHERE transcript_fts MATCH ? AND transcript_fts.item_id=? ORDER BY rank LIMIT ?`, [match, itemId, limit])
         .map((row) => ({ segmentId: String(row.segment_id), startMs: Number(row.start_ms), endMs: Number(row.end_ms), text: String(row.text), rank: Number(row.rank) }));
+    });
+  }
+
+  async searchContent(query: string, limit = 20): Promise<ContentSearchHit[]> {
+    return this.exclusive(() => {
+      const tokens = (query.match(/[\p{L}\p{N}]+/gu) ?? []).map((token) => token.toLocaleLowerCase());
+      if (tokens.length === 0) return [];
+      const phrase = query.trim().toLocaleLowerCase();
+      const matchesText = (value: string) => {
+        const normalized = value.toLocaleLowerCase();
+        return normalized.includes(phrase) || tokens.every((token) => normalized.includes(token));
+      };
+      const values: ContentSearchHit[] = [];
+      const itemRows = rows(this.db, 'SELECT * FROM content_items ORDER BY updated_at DESC, id');
+      const itemById = new Map(itemRows.map((row) => [String(row.id), itemFromRow(this.db, row)]));
+
+      for (const item of itemById.values()) {
+        if (matchesText(`${item.title} ${item.creator}`)) {
+          values.push({ item, matchType: 'metadata', excerpt: `${item.title} · ${item.creator}`, rank: -3 });
+        }
+      }
+
+      for (const row of rows(this.db, 'SELECT item_id,overview_json,details_json FROM summaries WHERE promoted_at IS NOT NULL ORDER BY promoted_at DESC,id')) {
+        const item = itemById.get(String(row.item_id));
+        if (!item) continue;
+        const claims = [...JSON.parse(String(row.overview_json)), ...JSON.parse(String(row.details_json))] as Array<{ text?: unknown }>;
+        const claim = claims.find((candidate) => typeof candidate.text === 'string' && matchesText(candidate.text));
+        if (claim && typeof claim.text === 'string') values.push({ item, matchType: 'summary', excerpt: claim.text, rank: -2 });
+      }
+
+      const match = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(' OR ');
+      for (const row of rows(this.db, `SELECT transcript_fts.item_id,s.segment_id,s.start_ms,s.end_ms,s.text,bm25(transcript_fts) AS rank
+        FROM transcript_fts JOIN transcript_segments s ON s.segment_id=transcript_fts.segment_id
+        WHERE transcript_fts MATCH ? ORDER BY rank LIMIT ?`, [match, Math.max(limit * 3, limit)])) {
+        const item = itemById.get(String(row.item_id));
+        if (!item) continue;
+        values.push({
+          item, matchType: 'transcript', excerpt: String(row.text), rank: Number(row.rank),
+          segmentId: String(row.segment_id), startMs: Number(row.start_ms), endMs: Number(row.end_ms),
+        });
+      }
+
+      const kindOrder = { metadata: 0, summary: 1, transcript: 2 } as const;
+      return values
+        .sort((left, right) => kindOrder[left.matchType] - kindOrder[right.matchType] || left.rank - right.rank || left.item.title.localeCompare(right.item.title))
+        .slice(0, Math.min(100, Math.max(1, limit)));
     });
   }
 
