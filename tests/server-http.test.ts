@@ -39,7 +39,7 @@ test('bootstrap removes the launch token, sets a strict HttpOnly cookie, and can
     assert.equal(bootstrap.status, 303);
     assert.equal(bootstrap.headers.get('location'), '/');
     assert.match(bootstrap.headers.get('set-cookie')!, /HttpOnly; SameSite=Strict/);
-    assert.equal(bootstrap.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(bootstrap.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
     const replay = await fetch(server.bootstrapUrl, { redirect: 'manual' });
     assert.equal(replay.status, 401);
     assert.equal((await replay.json() as { code: string }).code, 'invalid_bootstrap_token');

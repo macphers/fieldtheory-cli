@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { formatTimestamp, ItemPage, LibraryPage, youtubeEmbedUrl } from '../web/src/App.js';
@@ -34,6 +35,13 @@ test('formats timestamps and YouTube embeds deterministically', () => {
   assert.equal(formatTimestamp(65000), '1:05');
   assert.equal(formatTimestamp(3_661_000), '1:01:01');
   assert.equal(youtubeEmbedUrl('dQw4w9WgXcQ'), 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?enablejsapi=1&rel=0');
+  assert.equal(youtubeEmbedUrl('dQw4w9WgXcQ', 'http://127.0.0.1:43210'), 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?enablejsapi=1&rel=0&origin=http%3A%2F%2F127.0.0.1%3A43210');
+});
+
+test('the web document sends only its origin to embedded players', async () => {
+  const html = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
+  assert.match(html, /<meta name="referrer" content="strict-origin-when-cross-origin"/);
+  assert.doesNotMatch(html, /content="no-referrer"/);
 });
 
 test('progressive item states keep source content visible while work is incomplete', () => {
