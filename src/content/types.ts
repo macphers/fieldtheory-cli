@@ -4,7 +4,7 @@ export interface YouTubeSource {
   canonicalUrl: string;
 }
 
-export type ContentType = 'youtube' | 'article';
+export type ContentType = 'youtube' | 'article' | 'podcast';
 
 export interface ContentSourceRef {
   bookmarkId: string;
@@ -18,6 +18,7 @@ export interface DiscoveredContentItem {
   canonicalUrl: string;
   type: ContentType;
   videoId?: string;
+  mediaUrl?: string;
   sourceText?: string;
   sourceTitle?: string;
   sourceCreator?: string;
@@ -28,7 +29,7 @@ export interface DiscoveredContentItem {
 export interface TranscriptProviderProvenance {
   provider: string;
   toolVersion?: string;
-  source: 'creator-captions' | 'automatic-captions' | 'local-transcription' | 'article-text';
+  source: 'creator-captions' | 'automatic-captions' | 'publisher-transcript' | 'local-transcription' | 'article-text';
 }
 
 export interface RawTranscriptSegment {

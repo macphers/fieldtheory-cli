@@ -63,6 +63,7 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
   const [related, setRelated] = useState<RelatedContentHit[] | null>(null);
   const [relatedState, setRelatedState] = useState<'idle' | 'loading' | 'error'>('idle');
   const player = useRef<HTMLIFrameElement>(null);
+  const audio = useRef<HTMLAudioElement>(null);
   const chapterTab = useRef<HTMLButtonElement>(null);
   const transcriptTab = useRef<HTMLButtonElement>(null);
   const initialSegment = useRef<HTMLButtonElement>(null);
@@ -82,6 +83,7 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
 
   const seek = (milliseconds: number) => {
     player.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [milliseconds / 1000, true] }), 'https://www.youtube-nocookie.com');
+    if (audio.current) { audio.current.currentTime = milliseconds / 1000; void audio.current.play().catch(() => undefined); }
     trackActivity(item.canonicalId, 'citation_clicked', { startMs: milliseconds });
   };
   const persistNote = async () => {
@@ -140,13 +142,14 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
       <article className="document">
         <header className="item-header">
           <h1>{item.title}</h1>
-          <p className="source-line"><span aria-hidden="true" className={item.type === 'youtube' ? 'youtube-mark' : 'article-mark'} /> <a href={item.canonicalUrl} target="_blank" rel="noreferrer">{sourceLabel(item)}</a>{item.sourceRefs[0] ? <> · saved from X</> : null}</p>
+          <p className="source-line"><span aria-hidden="true" className={`${item.type}-mark`} /> <a href={item.canonicalUrl} target="_blank" rel="noreferrer">{sourceLabel(item)}</a>{item.sourceRefs[0] ? <> · saved from X</> : null}</p>
         </header>
 
         {item.type === 'youtube' && item.videoId ? <div className="player-frame">
           {embedFailed ? <div className="embed-fallback"><p>This video cannot be embedded.</p><a href={item.canonicalUrl} target="_blank" rel="noreferrer">Open on YouTube ↗</a></div>
             : <iframe ref={player} src={youtubeEmbedUrl(item.videoId, embedOrigin)} title={item.title} allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowFullScreen onError={() => setEmbedFailed(true)} />}
-        </div> : <div className="article-intro"><p className="eyebrow">Saved article</p><p>{Math.max(1, Math.round(item.durationMs / 60_000))} min read</p></div>}
+        </div> : item.type === 'podcast' && item.mediaUrl ? <div className="podcast-player"><div><p className="eyebrow">Saved podcast</p><p>{Math.max(1, Math.round(item.durationMs / 60_000))} min</p></div><audio ref={audio} controls preload="metadata" src={item.mediaUrl}>Your browser cannot play this podcast. <a href={item.canonicalUrl}>Open the episode</a>.</audio></div>
+          : <div className="article-intro"><p className="eyebrow">Saved article</p><p>{Math.max(1, Math.round(item.durationMs / 60_000))} min read</p></div>}
         <div className={`status-line status-${item.status}`} role="status">
           <span>{statusMessage(item)}</span>
           {problemJob ? <span className="status-actions">
@@ -191,8 +194,8 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
         {chat ? <section className={`chat-answer ${chat.refused ? 'chat-refused' : ''}`} aria-live="polite"><p className="eyebrow">Answer</p><p>{chat.answer}</p>{chat.citations.length ? <div className="chat-citations">{chat.citations.map((citation) => <TimestampButton key={citation.segmentId} milliseconds={citation.startMs} onSeek={seek} />)}</div> : null}</section> : null}
       </article>
       <form className="composer" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
-        <label className="sr-only" htmlFor="question">Ask about this {item.type === 'article' ? 'article' : 'video'}</label>
-        <input id="question" value={question} onChange={(event) => { setQuestion(event.target.value); setChatState('idle'); }} placeholder={chatState === 'error' ? 'Could not answer. Try again…' : 'Ask anything about this video…'} disabled={item.status !== 'ready' || chatState === 'asking'} maxLength={2000} />
+        <label className="sr-only" htmlFor="question">Ask about this {item.type === 'article' ? 'article' : item.type === 'podcast' ? 'podcast' : 'video'}</label>
+        <input id="question" value={question} onChange={(event) => { setQuestion(event.target.value); setChatState('idle'); }} placeholder={chatState === 'error' ? 'Could not answer. Try again…' : `Ask anything about this ${item.type === 'article' ? 'article' : item.type === 'podcast' ? 'podcast' : 'video'}…`} disabled={item.status !== 'ready' || chatState === 'asking'} maxLength={2000} />
         <span>{item.status === 'ready' ? chatState === 'asking' ? 'Reading transcript…' : 'Grounded in transcript' : 'Available when ready'}</span>
         <button type="submit" disabled={item.status !== 'ready' || chatState === 'asking' || !question.trim()} aria-label="Ask">↑</button>
       </form>
@@ -201,7 +204,7 @@ export function ItemPage({ item, transcript, onLibrary, onOpen, onRefresh, initi
 }
 
 function EmptyLibrary() {
-  return <main className="empty-library"><p className="eyebrow">Your Library</p><h1>Bookmark something worth understanding.</h1><p>Field Theory will quietly prepare saved YouTube videos and X articles as cited reading pages here.</p></main>;
+  return <main className="empty-library"><p className="eyebrow">Your Library</p><h1>Bookmark something worth understanding.</h1><p>Field Theory will quietly prepare saved videos, podcasts, and X articles as cited reading pages here.</p></main>;
 }
 
 export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen: (id: string, segmentId?: string) => void }) {
@@ -225,7 +228,7 @@ export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen:
   return <div className="app-shell">
     <Rail onLibrary={() => undefined} />
     <main className="library-shell">
-      <header className="library-header"><p className="eyebrow">Your Library</p><h1>Saved understanding</h1><p>Videos and articles discovered from your X bookmarks, prepared quietly in the background.</p></header>
+      <header className="library-header"><p className="eyebrow">Your Library</p><h1>Saved understanding</h1><p>Videos, podcasts, and articles discovered from your X bookmarks, prepared quietly in the background.</p></header>
       <div className="library-search">
         <label className="sr-only" htmlFor="library-search">Search saved sources</label>
         <span aria-hidden="true">⌕</span>
@@ -240,7 +243,7 @@ export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen:
         </button>) : <p className="search-empty">Nothing in your saved library matches “{query.trim()}”.</p>}
       </section> : <section className="library-list" aria-label="Knowledge pages">
         {items.map((item) => <button key={item.canonicalId} className="library-item" onClick={() => onOpen(item.canonicalId)}>
-          {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" loading="lazy" /> : <span className="library-placeholder" aria-hidden="true">▶</span>}
+          {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" loading="lazy" /> : <span className="library-placeholder" aria-hidden="true">{item.type === 'article' ? '≡' : item.type === 'podcast' ? '●' : '▶'}</span>}
           <span className="library-copy"><strong>{item.title}</strong><span>{item.creator}</span></span>
           <span className={`library-status status-${item.status}`}>{item.status === 'ready' ? 'Ready' : item.status === 'processing' ? 'Preparing…' : item.status}</span>
         </button>)}

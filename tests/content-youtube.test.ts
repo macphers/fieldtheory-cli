@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { BookmarkRecord } from '../src/types.js';
-import { discoverArticleContent, discoverYouTubeContent } from '../src/content/discovery.js';
+import { discoverArticleContent, discoverPodcastContent, discoverYouTubeContent, normalizePodcastUrl } from '../src/content/discovery.js';
 import { extractUrls, normalizeYouTubeUrl } from '../src/content/youtube.js';
 
 const VIDEO_ID = 'dQw4w9WgXcQ';
@@ -99,4 +99,17 @@ test('discovers enriched X articles as private source documents', () => {
   assert.equal(article.sourceTitle, 'A Durable Idea');
   assert.equal(article.sourceText, 'First paragraph.\n\nSecond paragraph.');
   assert.equal(article.sourceRefs[0].bookmarkId, 'article-1');
+});
+
+test('discovers supported podcast episode pages without treating Spotify tracks as podcasts', () => {
+  const episode = 'https://serve.podhome.fm/episodepage/CitadelDispatch/cd207-example?utm_source=x';
+  const normalized = normalizePodcastUrl(episode);
+  assert.equal(normalized?.canonicalUrl, 'https://serve.podhome.fm/episodepage/CitadelDispatch/cd207-example');
+  assert.match(normalized?.canonicalId ?? '', /^podcast:[a-f0-9]{24}$/);
+  assert.equal(normalizePodcastUrl('https://open.spotify.com/track/example'), null);
+  const [item] = discoverPodcastContent([{
+    id: 'podcast-1', tweetId: 'podcast-1', url: 'https://x.com/example/status/1', text: `Listen: ${episode}`, links: [episode], syncedAt: '2026-08-01T00:00:00.000Z',
+  }]);
+  assert.equal(item.type, 'podcast');
+  assert.equal(item.sourceRefs.length, 1);
 });

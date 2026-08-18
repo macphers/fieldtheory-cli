@@ -9,6 +9,7 @@ import type { ContentRepository, StoredContentItem } from './repository.js';
 import { buildChapters } from './synthesis/chapters.js';
 import { SynthesisPipeline, type SynthesisModel } from './synthesis/pipeline.js';
 import { TranscriptFallbackPipeline } from './transcripts/fallback.js';
+import { PodcastTranscriptPipeline } from './transcripts/podcast.js';
 import { TranscriptAcquisitionError, YtDlpTranscriptProvider } from './transcripts/yt-dlp.js';
 
 const IMPLEMENTATION_VERSION: Record<ProcessingStage, number> = { metadata: 1, transcript: 1, chapters: 1, summary: 1 };
@@ -49,6 +50,7 @@ export interface ContentOrchestratorOptions {
   repository: ContentRepository;
   metadataProvider: Pick<YtDlpTranscriptProvider, 'acquireMetadata'>;
   transcriptPipeline: Pick<TranscriptFallbackPipeline, 'acquire'>;
+  podcastPipeline?: Pick<PodcastTranscriptPipeline, 'acquireMetadata' | 'acquire'>;
   model?: SynthesisModel & {
     checkSupport: ConstructorParameters<typeof SynthesisPipeline>[0]['checkSupport'];
     checkSupportBatch?: ConstructorParameters<typeof SynthesisPipeline>[0]['checkSupportBatch'];
@@ -102,7 +104,10 @@ export class ContentOrchestrator {
         try {
           if (signal.aborted) throw new JobStageError('worker_stopped', 'Worker stopped.', 'retry');
           const item = await this.requiredItem(job.itemId);
-          const metadata = await this.options.metadataProvider.acquireMetadata(item.canonicalUrl, signal);
+          if (item.type === 'podcast' && !this.options.podcastPipeline) throw new JobStageError('podcast_provider_missing', 'Podcast processing is not configured.', 'blocked');
+          const metadata = item.type === 'podcast'
+            ? await this.options.podcastPipeline!.acquireMetadata(item.canonicalUrl, signal)
+            : await this.options.metadataProvider.acquireMetadata(item.canonicalUrl, signal);
           const now = this.now().toISOString();
           await this.options.repository.upsertItem({ ...item, ...metadata, canonicalId: item.canonicalId, canonicalUrl: item.canonicalUrl, type: item.type, sourceRefs: item.sourceRefs, updatedAt: now });
           const metadataHash = hash(metadata);
@@ -113,7 +118,10 @@ export class ContentOrchestrator {
         try {
           const item = await this.requiredItem(job.itemId);
           const allowLong = await this.options.repository.hasLongTranscriptionOverride(item.canonicalId);
-          const acquired = await this.options.transcriptPipeline.acquire(item.canonicalUrl, item.language, signal, allowLong);
+          if (item.type === 'podcast' && !this.options.podcastPipeline) throw new JobStageError('podcast_provider_missing', 'Podcast processing is not configured.', 'blocked');
+          const acquired = item.type === 'podcast'
+            ? await this.options.podcastPipeline!.acquire(item.canonicalUrl, item.language, signal, allowLong)
+            : await this.options.transcriptPipeline.acquire(item.canonicalUrl, item.language, signal, allowLong);
           const now = this.now().toISOString();
           await this.options.repository.upsertItem({ ...item, ...acquired.media, canonicalId: item.canonicalId, canonicalUrl: item.canonicalUrl, type: item.type, sourceRefs: item.sourceRefs, updatedAt: now });
           await this.options.repository.saveTranscript({ itemId: item.canonicalId, artifactHash: acquired.transcript.contentHash, artifactPath: acquired.artifactPath, transcript: acquired.transcript, acquiredAt: now });

@@ -47,7 +47,7 @@ test('persists canonical items, source refs, transcripts, and item-scoped FTS ac
   await reopened.close();
 });
 
-test('schema v2 preserves YouTube rows and accepts article rows without video IDs', async () => {
+test('schema v3 preserves YouTube rows and accepts articles and podcasts without video IDs', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-content-migration-'));
   const dbPath = path.join(dir, 'content.sqlite');
   const legacy = await openDb(dbPath);
@@ -72,6 +72,8 @@ test('schema v2 preserves YouTube rows and accepts article rows without video ID
   await repo.upsertItem({ canonicalId: 'article:x:one', canonicalUrl: 'https://x.com/example/article/one', type: 'article', sourceRefs: [], title: 'Article', creator: 'Author', durationMs: 30_000, createdAt: NOW, updatedAt: NOW });
   assert.equal((await repo.getItem('article:x:one'))?.type, 'article');
   assert.equal((await repo.getItem('article:x:one'))?.videoId, undefined);
+  await repo.upsertItem({ canonicalId: 'podcast:one', canonicalUrl: 'https://podcast.example/episode/one', type: 'podcast', mediaUrl: 'https://cdn.example/one.mp3', sourceRefs: [], title: 'Podcast', creator: 'Host', durationMs: 180_000, createdAt: NOW, updatedAt: NOW });
+  assert.equal((await repo.getItem('podcast:one'))?.mediaUrl, 'https://cdn.example/one.mp3');
   await repo.close();
 });
 
