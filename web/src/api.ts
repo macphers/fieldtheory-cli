@@ -33,9 +33,9 @@ export async function listItems(): Promise<KnowledgeItem[]> {
   return (await responseJson<{ data: KnowledgeItem[] }>(response)).data;
 }
 
-export async function searchContent(query: string, limit = 20): Promise<ContentSearchHit[]> {
+export async function searchContent(query: string, limit = 20, signal?: AbortSignal): Promise<ContentSearchHit[]> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
-  const response = await fetch(`/api/v1/search?${params.toString()}`, { credentials: 'same-origin' });
+  const response = await fetch(`/api/v1/search?${params.toString()}`, { credentials: 'same-origin', signal });
   return (await responseJson<{ data: ContentSearchHit[] }>(response)).data;
 }
 

@@ -4,7 +4,7 @@ import { mkdtemp, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import fixture from './fixtures/knowledge-page-youtube.json' with { type: 'json' };
-import { buildKnowledgePageArtifact, type KnowledgePageFixtureInput } from '../src/content/knowledge-page.js';
+import { buildKnowledgePageArtifact, normalizeTranscript, type KnowledgePageFixtureInput } from '../src/content/knowledge-page.js';
 import { SqlJsContentRepository } from '../src/content/sqljs-repository.js';
 import type { StoredContentItem } from '../src/content/repository.js';
 import { jobInputFingerprint } from '../src/jobs/state-machine.js';
@@ -46,6 +46,34 @@ test('persists canonical items, source refs, transcripts, and item-scoped FTS ac
   await reopened.close();
 });
 
+test('library search uses whole tokens, requires every query term, and preserves true transcript hits at the limit', async () => {
+  const { item, transcript } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  const searchableTranscript = normalizeTranscript(transcript.language, transcript.provenance, transcript.segments.map((segment, index) => ({
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+    text: index === 0 ? `AI breakthrough. ${segment.text}` : segment.text,
+  })));
+  await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: searchableTranscript.contentHash, artifactPath: '/fixture.json', transcript: searchableTranscript, acquiredAt: NOW });
+  for (let index = 0; index < 20; index += 1) {
+    await repo.upsertItem({
+      ...item,
+      canonicalId: `youtube:chair-${index}`,
+      videoId: `chair-${index}`,
+      canonicalUrl: `https://www.youtube.com/watch?v=chair-${index}`,
+      title: `Chair design ${index}`,
+      sourceRefs: [],
+    });
+  }
+
+  const aiHits = await repo.searchContent('AI', 20);
+  assert.ok(aiHits.some((hit) => hit.item.canonicalId === item.canonicalId && hit.matchType === 'transcript'));
+  assert.ok(aiHits.every((hit) => !hit.item.title.startsWith('Chair')));
+  assert.deepEqual(await repo.searchContent('practical zebra'), []);
+  await repo.close();
+});
+
 test('upserts source provenance without duplicating canonical content', async () => {
   const { item } = domainFixture();
   const { repo } = await repository();
@@ -84,6 +112,13 @@ test('promotes only chapters and summaries grounded in the current transcript', 
   assert.equal((await repo.getSummary(item.canonicalId))?.overview.length, page.overview.length);
   assert.ok((await repo.searchContent(page.overview[0].text)).some((hit) => hit.matchType === 'summary' && hit.item.canonicalId === item.canonicalId));
   await assert.rejects(repo.saveSummary({ itemId: item.canonicalId, transcriptContentHash: 'stale', overview: page.overview, details: page.details, provider: 'fixture', promptVersion: 1, artifactHash: 'stale-summary', validationState: 'supported', createdAt: NOW, promotedAt: NOW }), /current transcript/);
+  const replacement = normalizeTranscript(transcript.language, transcript.provenance, transcript.segments.map((segment, index) => ({
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+    text: index === 0 ? 'Replacement transcript with no prior summary language.' : segment.text,
+  })));
+  await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: replacement.contentHash, artifactPath: '/replacement.json', transcript: replacement, acquiredAt: NOW });
+  assert.ok(!(await repo.searchContent(page.overview[0].text)).some((hit) => hit.matchType === 'summary'));
   await repo.close();
 });
 

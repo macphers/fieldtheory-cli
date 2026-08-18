@@ -66,7 +66,10 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh, initialSegmen
   useEffect(() => {
     if (!initialSegmentId) return;
     setTab('transcript');
-    const frame = window.requestAnimationFrame(() => initialSegment.current?.scrollIntoView({ block: 'center' }));
+    const frame = window.requestAnimationFrame(() => {
+      initialSegment.current?.focus({ preventScroll: true });
+      initialSegment.current?.scrollIntoView({ block: 'center' });
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [initialSegmentId]);
 
@@ -154,7 +157,7 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh, initialSegmen
           </div>
           <div id="source-panel" className="source-list" role="tabpanel" aria-labelledby={tab === 'chapters' ? 'chapters-tab' : 'transcript-tab'}>
             {tab === 'chapters' ? item.chapters?.map((chapter) => <button className="source-row" key={`${chapter.startMs}-${chapter.label}`} onClick={() => seek(chapter.startMs)}><span>{formatTimestamp(chapter.startMs)}</span><strong>{chapter.label}</strong></button>)
-              : transcript.length ? transcript.map((segment) => <button ref={segment.id === initialSegmentId ? initialSegment : undefined} className={`source-row transcript-row${segment.id === initialSegmentId ? ' search-match' : ''}`} key={segment.id} onClick={() => seek(segment.startMs)}><span>{formatTimestamp(segment.startMs)}</span><span>{segment.text}</span></button>)
+              : transcript.length ? transcript.map((segment) => <button ref={segment.id === initialSegmentId ? initialSegment : undefined} className={`source-row transcript-row${segment.id === initialSegmentId ? ' search-match' : ''}`} aria-current={segment.id === initialSegmentId ? 'true' : undefined} key={segment.id} onClick={() => seek(segment.startMs)}><span>{formatTimestamp(segment.startMs)}</span><span>{segment.text}</span></button>)
                 : <p className="empty-source">The transcript will appear here as processing completes.</p>}
           </div>
         </section>
@@ -191,12 +194,13 @@ export function LibraryPage({ items, onOpen }: { items: KnowledgeItem[]; onOpen:
     const value = query.trim();
     if (value.length < 2) { setResults(null); setSearchState('idle'); return; }
     const controller = new AbortController();
+    setResults(null);
     setSearchState('searching');
     const timer = window.setTimeout(() => {
-      void searchContent(value).then((hits) => {
+      void searchContent(value, 20, controller.signal).then((hits) => {
         if (controller.signal.aborted) return;
         setResults(hits); setSearchState('idle');
-      }).catch(() => { if (!controller.signal.aborted) setSearchState('error'); });
+      }).catch(() => { if (!controller.signal.aborted) { setResults(null); setSearchState('error'); } });
     }, 180);
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [query]);

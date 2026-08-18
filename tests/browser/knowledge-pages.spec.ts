@@ -188,4 +188,6 @@ test('14 library search opens the matching transcript segment', async ({ page })
   await expect(page.getByRole('tab', { name: 'Transcript' })).toHaveAttribute('aria-selected', 'true');
   const matchingSegment = page.getByRole('button', { name: /1:00.*practical mechanism/ });
   await expect(matchingSegment).toHaveClass(/search-match/);
+  await expect(matchingSegment).toHaveAttribute('aria-current', 'true');
+  await expect(matchingSegment).toBeFocused();
 });
