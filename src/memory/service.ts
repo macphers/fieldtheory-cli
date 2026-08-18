@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { readJsonLines } from '../fs.js';
 import { searchBookmarks } from '../bookmarks-db.js';
 import type { BookmarkRecord } from '../types.js';
-import { dataDir } from '../paths.js';
+import { dataDir, twitterBookmarksCachePath } from '../paths.js';
+import { isUserSavedBookmark } from '../content/discovery.js';
 import { listLibraryDocuments, searchLibraryDocuments } from '../library.js';
 import type { ContentOrchestrator } from '../content/orchestrator.js';
 import type { ContentCapabilities, ContentRepository, ContentSearchHit, StoredContentItem } from '../content/repository.js';
@@ -32,6 +34,7 @@ export interface MemoryCard {
   capabilities: ContentCapabilities;
   lifecycle: MemoryLifecycle;
   reason: string;
+  evidenceExcerpt?: string;
 }
 
 export interface MemoryTopic {
@@ -85,6 +88,7 @@ export class MemoryService {
       orchestrator?: Pick<ContentOrchestrator, 'discover'>;
       model?: MemorySynthesisModel;
       statePath?: string;
+      bookmarkCachePath?: string;
       now?: () => Date;
     } = {},
   ) {}
@@ -123,6 +127,20 @@ export class MemoryService {
     return this.stateWrite;
   }
 
+  private async cachedBookmarks(): Promise<BookmarkRecord[]> {
+    return readJsonLines<BookmarkRecord>(this.options.bookmarkCachePath ?? twitterBookmarksCachePath()).catch(() => []);
+  }
+
+  async filterUserSavedItems(items: StoredContentItem[]): Promise<StoredContentItem[]> {
+    const legacyLikeIds = new Set((await this.cachedBookmarks()).filter((bookmark) => !isUserSavedBookmark(bookmark)).map((bookmark) => bookmark.id));
+    return items.filter((item) => item.sourceRefs.some((ref) => !legacyLikeIds.has(ref.bookmarkId)));
+  }
+
+  async listUserSavedItems(limit = 50, offset = 0): Promise<StoredContentItem[]> {
+    const items = await this.filterUserSavedItems(await this.repository.listItems(100_000, 0));
+    return items.slice(offset, offset + limit);
+  }
+
   async setLifecycle(itemId: string, lifecycle: MemoryLifecycle): Promise<void> {
     const state = await this.readState();
     state.lifecycle[itemId] = lifecycle;
@@ -136,34 +154,48 @@ export class MemoryService {
   }
 
   async today(limit = 3): Promise<MemoryCard[]> {
-    const [items, state] = await Promise.all([this.repository.listItems(100, 0), this.readState()]);
-    const eligible = items.filter((item) => !['dismissed', 'archived'].includes(state.lifecycle[item.canonicalId] ?? 'new'));
+    const [items, state] = await Promise.all([
+      this.repository.listItems(100, 0),
+      this.readState(),
+    ]);
+    const eligible = (await this.filterUserSavedItems(items)).filter((item) => !['dismissed', 'archived'].includes(state.lifecycle[item.canonicalId] ?? 'new'));
     const scored = await Promise.all(eligible.map(async (item) => {
-      const capabilities = await this.repository.itemCapabilities(item.canonicalId);
+      const [capabilities, summary] = await Promise.all([
+        this.repository.itemCapabilities(item.canonicalId),
+        this.repository.getSummary(item.canonicalId),
+      ]);
       const lifecycle = state.lifecycle[item.canonicalId] ?? 'new';
       const sourceAge = Math.max(0, Date.now() - Date.parse(item.updatedAt));
       const freshness = Math.max(0, 14 - sourceAge / 86_400_000);
       const readiness = (capabilities.summary ? 8 : 0) + (capabilities.text ? 4 : 0) + (capabilities.exactSearch ? 2 : 0);
       const authored = lifecycle === 'kept' || lifecycle === 'applied' ? 5 : 0;
-      return { item, capabilities, lifecycle, score: readiness + freshness + authored };
+      return { item, capabilities, lifecycle, evidenceExcerpt: summary?.overview[0]?.text, score: readiness + freshness + authored };
     }));
-    return scored.sort((a, b) => b.score - a.score || b.item.updatedAt.localeCompare(a.item.updatedAt)).slice(0, Math.max(1, Math.min(limit, 7))).map(({ item, capabilities, lifecycle }, index) => ({
+    return scored.sort((a, b) => b.score - a.score || b.item.updatedAt.localeCompare(a.item.updatedAt)).slice(0, Math.max(1, Math.min(limit, 7))).map(({ item, capabilities, lifecycle, evidenceExcerpt }, index) => ({
       item,
       capabilities,
       lifecycle,
+      ...(evidenceExcerpt ? { evidenceExcerpt } : {}),
       reason: lifecycle === 'applied' ? 'Worth revisiting because you marked it applied.' : lifecycle === 'kept' ? 'A kept idea that may be useful again.' : index === 0 ? 'Recently ready and rich enough to revisit.' : capabilities.summary ? 'A recent source with a cited digest.' : 'A recent source you can already search.',
     }));
   }
 
   async search(query: string, limit = 20): Promise<MemorySearchHit[]> {
     const capped = Math.max(1, Math.min(limit, 100));
-    const [content, documents, bookmarks, semantic] = await Promise.all([
+    const [rawContent, documents, rawBookmarks, semantic, visibleItems, cachedBookmarks] = await Promise.all([
       this.repository.searchContent(query, capped).catch(() => [] as ContentSearchHit[]),
       Promise.resolve(searchLibraryDocuments(query, { limit: capped })).catch(() => []),
       searchBookmarks({ query, limit: capped }).catch(() => []),
       new LocalEmbeddingService(this.repository).semanticSearch(query, capped).catch(() => []),
+      this.listUserSavedItems(100_000, 0),
+      this.cachedBookmarks(),
     ]);
-    const semanticItems = new Map((await Promise.all(semantic.map(async (hit) => [hit, await this.repository.getItem(hit.itemId as StoredContentItem['canonicalId'])] as const))).filter((entry): entry is readonly [typeof entry[0], StoredContentItem] => Boolean(entry[1])));
+    const visibleIds = new Set(visibleItems.map((item) => item.canonicalId));
+    const userSavedBookmarkIds = new Set(cachedBookmarks.filter(isUserSavedBookmark).map((bookmark) => bookmark.id));
+    const content = rawContent.filter((hit) => visibleIds.has(hit.item.canonicalId));
+    const bookmarks = rawBookmarks.filter((bookmark) => userSavedBookmarkIds.has(bookmark.id));
+    const visibleSemantic = semantic.filter((hit) => visibleIds.has(hit.itemId as StoredContentItem['canonicalId']));
+    const semanticItems = new Map((await Promise.all(visibleSemantic.map(async (hit) => [hit, await this.repository.getItem(hit.itemId as StoredContentItem['canonicalId'])] as const))).filter((entry): entry is readonly [typeof entry[0], StoredContentItem] => Boolean(entry[1])));
     const hits: MemorySearchHit[] = [
       ...content.map((hit, index) => ({
         id: `content:${hit.item.canonicalId}:${hit.segmentId ?? hit.matchType}`,
@@ -190,7 +222,7 @@ export class MemoryService {
   }
 
   async topics(limit = 12): Promise<MemoryTopic[]> {
-    const items = await this.repository.listItems(250, 0);
+    const items = await this.listUserSavedItems(250, 0);
     const byId = new Map(items.map((item) => [item.canonicalId, item]));
     const semanticClusters = await new LocalEmbeddingService(this.repository).clusters(Math.min(limit, 8)).catch(() => []);
     if (semanticClusters.length > 0) {
@@ -224,13 +256,14 @@ export class MemoryService {
   }
 
   async connections(limit = 12): Promise<MemoryConnection[]> {
-    const [items, state] = await Promise.all([this.repository.listItems(80, 0), this.readState()]);
+    const [items, state] = await Promise.all([this.listUserSavedItems(80, 0), this.readState()]);
     const byId = new Map(items.map((item) => [item.canonicalId, item]));
     const connections: MemoryConnection[] = [];
     for (const item of items.slice(0, 24)) {
       for (const hit of await this.repository.relatedContent(item.canonicalId, 3)) {
         if (item.canonicalId >= hit.item.canonicalId || hit.score <= 0) continue;
-        const target = byId.get(hit.item.canonicalId) ?? hit.item;
+        const target = byId.get(hit.item.canonicalId);
+        if (!target) continue;
         const id = `connection:${item.canonicalId}:${target.canonicalId}`;
         if (state.feedback[id] === 'wrong') continue;
         connections.push({
@@ -286,7 +319,7 @@ export class MemoryService {
   }
 
   async status(): Promise<{ items: number; documents: number; sync: MemoryState['sync']; backfill: MemoryState['backfill'] }> {
-    const [items, state] = await Promise.all([this.repository.listItems(100_000, 0), this.readState()]);
+    const [items, state] = await Promise.all([this.listUserSavedItems(100_000, 0), this.readState()]);
     return { items: items.length, documents: listLibraryDocuments({ limit: 100_000 }).length, sync: state.sync, backfill: state.backfill };
   }
 

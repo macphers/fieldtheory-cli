@@ -279,16 +279,16 @@ function MemoryCard({ memory, onOpen }: { memory: TodayMemory; onOpen: (id: stri
   const choose = (next: 'keep' | 'dismiss' | 'applied') => { setChoice(next); void recordMemoryFeedback(memory.id, next); };
   if (choice === 'dismiss') return <article className="memory-card dismissed"><p>Dismissed. Nothing was deleted.</p><button onClick={() => setChoice(null)}>Undo</button></article>;
   return <article className="memory-card">
-    <div className="memory-label"><span>{memory.label}</span><span>{memory.provenance === 'authored' ? 'Your insight' : memory.provenance === 'generated' ? 'Generated connection' : 'Source passage'}</span></div>
+    <div className="memory-label"><span>{memory.label}</span><span>{memory.provenance === 'authored' ? 'Your insight' : memory.provenance === 'generated' ? 'Generated connection' : 'Saved source'}</span></div>
     <h2>{memory.title}</h2><p className="why-now"><strong>Why now:</strong> {memory.whyNow}</p>
-    {memory.evidence[0] ? <blockquote>“{memory.evidence[0].preview}”<cite>{memory.evidence[0].sourceTitle}{memory.evidence[0].location ? ` · ${memory.evidence[0].location}` : ''}</cite></blockquote> : null}
+    {memory.evidence[0] ? <blockquote>“{memory.evidence[0].preview}”<cite>{memory.evidence[0].sourceUrl ? <a href={memory.evidence[0].sourceUrl} target="_blank" rel="noreferrer">{memory.evidence[0].location ?? 'View saved source'} ↗</a> : memory.evidence[0].location ?? memory.evidence[0].sourceTitle}</cite></blockquote> : null}
     <div className="memory-actions">{memory.itemId ? <button onClick={() => onOpen(memory.itemId!)}>Open evidence</button> : null}<button aria-pressed={choice === 'keep'} onClick={() => choose('keep')}>Keep</button><button onClick={() => choose('dismiss')}>Dismiss</button><button aria-pressed={choice === 'applied'} onClick={() => choose('applied')}>Applied</button></div>
   </article>;
 }
 
 function TodayPage({ items, memories, health, onOpen, onAdd }: { items: KnowledgeItem[]; memories: TodayMemory[]; health: SyncHealth | null; onOpen: (id: string) => void; onAdd: () => void }) {
   const useful = (memories.length ? memories : fallbackMemories(items)).slice(0, 3);
-  return <main className="surface-shell"><SurfaceHeader eyebrow="Today" title="A few useful memories" description="Connections worth seeing now. Nothing accumulates and there is no backlog to clear." health={health} onAdd={onAdd} />
+  return <main className="surface-shell"><SurfaceHeader eyebrow="Today" title="Worth revisiting" description="Up to three items you saved, each with its original source and a concrete reason to return." health={health} onAdd={onAdd} />
     {useful.length ? <section className="memory-feed" aria-label="Today's useful memories">{useful.map((memory) => <MemoryCard key={memory.id} memory={memory} onOpen={onOpen} />)}</section>
       : <section className="settled-empty"><p className="eyebrow">All caught up</p><h2>Nothing else needs your attention.</h2><p>As sources become useful, Field Theory will bring back at most three with a clear reason.</p></section>}
   </main>;

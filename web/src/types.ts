@@ -63,6 +63,7 @@ export interface MemoryEvidence {
   sourceId?: string;
   sourceTitle: string;
   preview: string;
+  sourceUrl?: string;
   segmentId?: string;
   startMs?: number;
   location?: string;

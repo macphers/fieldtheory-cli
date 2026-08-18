@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import fixture from './fixtures/knowledge-page-youtube.json' with { type: 'json' };
@@ -18,7 +18,7 @@ async function setup() {
   const item: StoredContentItem = { ...artifact.item, language: artifact.transcript.language, createdAt: NOW, updatedAt: NOW };
   await repository.upsertItem(item);
   await repository.saveTranscript({ itemId: item.canonicalId, artifactHash: artifact.transcript.contentHash, artifactPath: '/fixture.json', transcript: artifact.transcript, acquiredAt: NOW });
-  const related: StoredContentItem = { ...item, canonicalId: 'youtube:related-memory', videoId: 'relatedMemory', canonicalUrl: 'https://www.youtube.com/watch?v=relatedMemory', title: 'A Practical Mechanism for Better Systems', sourceRefs: [] };
+  const related: StoredContentItem = { ...item, canonicalId: 'youtube:related-memory', videoId: 'relatedMemory', canonicalUrl: 'https://www.youtube.com/watch?v=relatedMemory', title: 'A Practical Mechanism for Better Systems', sourceRefs: [{ ...item.sourceRefs[0], bookmarkId: 'related-bookmark' }] };
   const transcript = normalizeTranscript('en', artifact.transcript.provenance, [{ startMs: 0, endMs: 10_000, text: 'A practical mechanism uses evidence and examples to improve systems.' }]);
   await repository.upsertItem(related);
   await repository.saveTranscript({ itemId: related.canonicalId, artifactHash: transcript.contentHash, artifactPath: '/related.json', transcript, acquiredAt: NOW });
@@ -34,6 +34,19 @@ test('today is bounded, capability-derived, and lifecycle feedback persists', as
     assert.equal(first[0].capabilities.text, true);
     await memory.setLifecycle(item.canonicalId, 'dismissed');
     assert.ok((await memory.today(3)).every((card) => card.item.canonicalId !== item.canonicalId));
+  } finally { await repository.close(); }
+});
+
+test('today excludes sources derived only from legacy X likes', async () => {
+  const { repository, item } = await setup();
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-memory-provenance-'));
+  const cachePath = path.join(dir, 'bookmarks.jsonl');
+  await writeFile(cachePath, `${JSON.stringify({ id: item.sourceRefs[0].bookmarkId, tags: ['twitter-like'] })}\n`);
+  const memory = new MemoryService(repository, { statePath: path.join(dir, 'memory-state.json'), bookmarkCachePath: cachePath, now: () => new Date(NOW) });
+  try {
+    const cards = await memory.today(3);
+    assert.ok(cards.every((card) => card.item.canonicalId !== item.canonicalId));
+    assert.ok(cards.some((card) => card.item.canonicalId === 'youtube:related-memory'));
   } finally { await repository.close(); }
 });
 

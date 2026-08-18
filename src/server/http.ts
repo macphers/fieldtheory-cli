@@ -159,9 +159,9 @@ export async function startContentServer(options: ContentServerOptions): Promise
           label: card.lifecycle === 'kept' ? 'Kept memory' : card.lifecycle === 'applied' ? 'Applied before' : card.capabilities.summary ? 'Ready to skim' : 'Text ready',
           title: card.item.title,
           whyNow: card.reason,
-          provenance: 'generated',
+          provenance: 'source',
           itemId: card.item.canonicalId,
-          evidence: [{ sourceId: card.item.canonicalId, sourceTitle: card.item.title, preview: card.capabilities.summary ? 'A cited digest is ready.' : card.capabilities.text ? 'The source text is searchable now.' : 'Recently captured source.', reason: index === 0 ? 'Highest-value ready memory today.' : card.reason }],
+          evidence: [{ sourceId: card.item.canonicalId, sourceTitle: card.item.title, sourceUrl: card.item.sourceRefs[0]?.bookmarkUrl, location: card.item.sourceRefs[0]?.bookmarkId.startsWith('manual:') ? 'Added manually' : 'Saved from X', preview: card.evidenceExcerpt ?? (card.capabilities.text ? 'Source text is ready to inspect.' : 'Recently captured source.'), reason: index === 0 ? 'Highest-value ready memory today.' : card.reason }],
         })) });
       }
       if (request.method === 'GET' && url.pathname === '/api/v1/memory/search') {
@@ -255,7 +255,9 @@ export async function startContentServer(options: ContentServerOptions): Promise
         const limit = integerQuery(url.searchParams.get('limit'), 50, 1, 100);
         const offset = integerQuery(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
         if (limit === null || offset === null) return apiError(response, 400, { code: 'invalid_pagination', message: 'Pagination values must be non-negative integers.', retryable: false, action: 'Use integer limit and offset query parameters.' });
-        const items = await options.repository.listItems(limit, offset);
+        const items = options.memory
+          ? await options.memory.listUserSavedItems(limit, offset)
+          : await options.repository.listItems(limit, offset);
         const data = await Promise.all(items.map(async (item) => ({ ...item, status: await options.repository.itemStatus(item.canonicalId, requiredStages(item)) })));
         return json(response, 200, { data, pagination: { limit, offset, count: data.length } });
       }
@@ -263,7 +265,10 @@ export async function startContentServer(options: ContentServerOptions): Promise
         const query = url.searchParams.get('q')?.trim() ?? '';
         const limit = integerQuery(url.searchParams.get('limit'), 20, 1, 100);
         if (!query || query.length > 500 || limit === null) return apiError(response, 400, { code: 'invalid_search', message: 'Search requires a query up to 500 characters and an integer limit.', retryable: false, action: 'Enter a shorter search query.' });
-        const hits = await options.repository.searchContent(query, limit);
+        const rawHits = await options.repository.searchContent(query, limit);
+        const visibleItems = options.memory ? await options.memory.filterUserSavedItems(rawHits.map((hit) => hit.item)) : rawHits.map((hit) => hit.item);
+        const visibleIds = new Set(visibleItems.map((item) => item.canonicalId));
+        const hits = rawHits.filter((hit) => visibleIds.has(hit.item.canonicalId));
         const statuses = new Map<string, Promise<Awaited<ReturnType<ContentRepository['itemStatus']>>>>();
         const data = await Promise.all(hits.map(async (hit) => {
           let status = statuses.get(hit.item.canonicalId);
