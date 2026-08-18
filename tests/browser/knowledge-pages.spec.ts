@@ -153,3 +153,27 @@ test('10 processing state keeps the page readable and cancellable', async ({ pag
 test('11 blocked state is actionable and responsive on mobile', async ({ page }) => {
   await loadLibrary(page, 390, 844); await openItem(page, blockedItem.title); await expect(page.getByRole('status')).toContainText('whisper.cpp is not installed'); await expect(page.getByRole('status')).toContainText('ft app doctor'); await expect(page.getByRole('button', { name: 'Retry' })).toHaveCount(0); await expectMobileTargets(page); await expectNoHorizontalOverflow(page);
 });
+
+test('12 source tabs support arrow-key navigation', async ({ page }) => {
+  await loadLibrary(page, 1280, 900); await openItem(page, readyItem.title);
+  const chapters = page.getByRole('tab', { name: 'Chapters' });
+  const transcriptTab = page.getByRole('tab', { name: 'Transcript' });
+  await chapters.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(transcriptTab).toBeFocused();
+  await expect(transcriptTab).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowLeft');
+  await expect(chapters).toBeFocused();
+  await expect(chapters).toHaveAttribute('aria-selected', 'true');
+});
+
+test('13 note conflicts preserve the draft and explain recovery', async ({ page }) => {
+  await loadLibrary(page, 1366, 900);
+  await page.route('**/api/v1/items/*/note', (route) => json(route, { code: 'note_conflict', message: 'version conflict', action: 'Reload.' }, 409));
+  await openItem(page, readyItem.title);
+  const note = page.getByLabel('Notes');
+  await note.fill('Keep this unsaved draft.');
+  await page.getByRole('button', { name: 'Save note' }).click();
+  await expect(page.getByText(/A newer note exists.*draft is preserved/)).toBeVisible();
+  await expect(note).toHaveValue('Keep this unsaved draft.');
+});

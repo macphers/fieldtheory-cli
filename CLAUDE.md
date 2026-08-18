@@ -10,6 +10,7 @@ npm run dev          # Run via tsx directly
 npm run test         # Run tests
 npm run check:docs   # Verify the Markdown inventory
 npm run test:browser # Build and exercise the knowledge-page UI in Chromium
+npm run verify       # Run docs, unit tests, production build, and browser tests
 npm run start        # Run compiled dist/cli.js
 ```
 

@@ -847,15 +847,21 @@ export function buildCli() {
   appCommand
     .command('doctor')
     .description('Check local knowledge-page dependencies')
-    .action(safe(async () => {
+    .option('--json', 'Print machine-readable JSON')
+    .action(safe(async (options) => {
       const checks = await inspectContentDependencies({ runner: new NodeProcessRunner(), contentRoot: contentDir() });
+      const capabilities = assessContentCapabilities(checks);
+      if (options.json) {
+        console.log(JSON.stringify({ checks, capabilities }, null, 2));
+        if (!capabilities.usable) process.exitCode = 1;
+        return;
+      }
       for (const check of checks) {
         const mark = check.state === 'ready' ? '\u2713' : check.state === 'unsupported' ? '!' : '\u2717';
         const detail = check.version ?? check.location ?? check.action ?? '';
         console.log(`  ${mark} ${check.name}: ${check.state}${detail ? ` — ${detail}` : ''}`);
         if (check.action && detail !== check.action) console.log(`    ${check.action}`);
       }
-      const capabilities = assessContentCapabilities(checks);
       console.log('');
       console.log(`  Captioned videos: ${capabilities.captionedVideos ? 'ready' : 'not ready'}`);
       console.log(`  Local transcription fallback: ${capabilities.localTranscription ? 'ready' : 'optional dependencies missing'}`);

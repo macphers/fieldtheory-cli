@@ -2,9 +2,21 @@ import type { ChatAnswer, KnowledgeItem, TranscriptSegment } from './types';
 
 let csrfToken: string | null = null;
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly action?: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function responseJson<T>(response: Response): Promise<T> {
-  const body = await response.json() as T & { message?: string };
-  if (!response.ok) throw new Error(body.message ?? `Request failed with HTTP ${response.status}.`);
+  const body = await response.json() as T & { message?: string; code?: string; action?: string };
+  if (!response.ok) throw new ApiError(body.message ?? `Request failed with HTTP ${response.status}.`, response.status, body.code, body.action);
   return body;
 }
 

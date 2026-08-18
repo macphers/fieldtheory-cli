@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { allowLongTranscription, askItem, cancelJob, getItem, getTranscript, listItems, recordActivity, retryJob, saveNote } from './api';
+import { ApiError, allowLongTranscription, askItem, cancelJob, getItem, getTranscript, listItems, recordActivity, retryJob, saveNote } from './api';
 import type { ChatAnswer, KnowledgeItem, TranscriptSegment } from './types';
 
 export function formatTimestamp(milliseconds: number): string {
@@ -50,13 +50,15 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
   const [tab, setTab] = useState<'chapters' | 'transcript'>(item.chapters?.length ? 'chapters' : 'transcript');
   const [note, setNote] = useState(item.note?.markdown ?? '');
   const [noteVersion, setNoteVersion] = useState<number | null>(item.note?.version ?? 0);
-  const [noteState, setNoteState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [noteState, setNoteState] = useState<'idle' | 'saving' | 'saved' | 'conflict' | 'error'>('idle');
   const [embedFailed, setEmbedFailed] = useState(false);
   const [question, setQuestion] = useState('');
   const [chat, setChat] = useState<ChatAnswer | null>(null);
   const [chatState, setChatState] = useState<'idle' | 'asking' | 'error'>('idle');
   const [jobState, setJobState] = useState<'idle' | 'working' | 'error'>('idle');
   const player = useRef<HTMLIFrameElement>(null);
+  const chapterTab = useRef<HTMLButtonElement>(null);
+  const transcriptTab = useRef<HTMLButtonElement>(null);
   const embedOrigin = typeof window === 'undefined' ? undefined : window.location.origin;
 
   useEffect(() => { trackActivity(item.canonicalId, 'item_opened'); }, [item.canonicalId]);
@@ -72,7 +74,22 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
       setNoteVersion(saved.version);
       setNoteState('saved');
       trackActivity(item.canonicalId, 'note_saved');
-    } catch { setNoteState('error'); }
+    } catch (error) {
+      setNoteState(error instanceof ApiError && error.code === 'note_conflict' ? 'conflict' : 'error');
+    }
+  };
+  const selectTab = (next: 'chapters' | 'transcript') => {
+    if (next === 'chapters' && !item.chapters?.length) return;
+    setTab(next);
+    (next === 'chapters' ? chapterTab : transcriptTab).current?.focus();
+  };
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const hasChapters = Boolean(item.chapters?.length);
+    if (event.key === 'Home') return selectTab(hasChapters ? 'chapters' : 'transcript');
+    if (event.key === 'End' || !hasChapters) return selectTab('transcript');
+    selectTab(tab === 'chapters' ? 'transcript' : 'chapters');
   };
   const ask = async () => {
     const value = question.trim();
@@ -125,10 +142,10 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
 
         <section className="source-surface" aria-label="Source navigation">
           <div className="tabs" role="tablist">
-            <button role="tab" aria-selected={tab === 'chapters'} onClick={() => setTab('chapters')} disabled={!item.chapters?.length}>Chapters</button>
-            <button role="tab" aria-selected={tab === 'transcript'} onClick={() => setTab('transcript')}>Transcript</button>
+            <button ref={chapterTab} id="chapters-tab" role="tab" aria-selected={tab === 'chapters'} aria-controls="source-panel" tabIndex={tab === 'chapters' ? 0 : -1} onKeyDown={onTabKeyDown} onClick={() => selectTab('chapters')} disabled={!item.chapters?.length}>Chapters</button>
+            <button ref={transcriptTab} id="transcript-tab" role="tab" aria-selected={tab === 'transcript'} aria-controls="source-panel" tabIndex={tab === 'transcript' ? 0 : -1} onKeyDown={onTabKeyDown} onClick={() => selectTab('transcript')}>Transcript</button>
           </div>
-          <div className="source-list" role="tabpanel">
+          <div id="source-panel" className="source-list" role="tabpanel" aria-labelledby={tab === 'chapters' ? 'chapters-tab' : 'transcript-tab'}>
             {tab === 'chapters' ? item.chapters?.map((chapter) => <button className="source-row" key={`${chapter.startMs}-${chapter.label}`} onClick={() => seek(chapter.startMs)}><span>{formatTimestamp(chapter.startMs)}</span><strong>{chapter.label}</strong></button>)
               : transcript.length ? transcript.map((segment) => <button className="source-row transcript-row" key={segment.id} onClick={() => seek(segment.startMs)}><span>{formatTimestamp(segment.startMs)}</span><span>{segment.text}</span></button>)
                 : <p className="empty-source">The transcript will appear here as processing completes.</p>}
@@ -138,7 +155,7 @@ export function ItemPage({ item, transcript, onLibrary, onRefresh }: { item: Kno
         <section className="notes-section">
           <label htmlFor="item-note">Notes</label>
           <textarea id="item-note" value={note} onChange={(event) => { setNote(event.target.value); setNoteState('idle'); }} placeholder="Add notes…" rows={3} />
-          <div className="note-actions"><span aria-live="polite">{noteState === 'saving' ? 'Saving…' : noteState === 'saved' ? 'Saved' : noteState === 'error' ? 'Could not save. Reload before retrying.' : ''}</span><button onClick={persistNote} disabled={noteState === 'saving'}>Save note</button></div>
+          <div className="note-actions"><span aria-live="polite">{noteState === 'saving' ? 'Saving…' : noteState === 'saved' ? 'Saved' : noteState === 'conflict' ? 'A newer note exists. Your draft is preserved; copy it before reloading.' : noteState === 'error' ? 'Could not reach Field Theory. Your draft is preserved; try again.' : ''}</span><button onClick={persistNote} disabled={noteState === 'saving'}>Save note</button></div>
         </section>
 
         {item.overview?.length ? <section className="synthesis"><h2>Overview</h2><ul>{item.overview.map((claim, index) => <li key={index}>{claim.text} {claim.citations.map((citation) => <TimestampButton key={citation.startMs} milliseconds={citation.startMs} onSeek={seek} />)}</li>)}</ul></section> : null}
