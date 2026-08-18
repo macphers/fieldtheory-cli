@@ -1,4 +1,3 @@
-<!-- /autoplan restore point: /Users/mikemacpherson/.gstack/projects/afar1-fieldtheory-cli/feat-second-brain-upgrade-autoplan-restore-20260818-140902.md -->
 # Field Theory second-brain upgrade plan
 
 ## Outcome
@@ -22,7 +21,7 @@ Turn Field Theory's local knowledge-page prototype into a dependable daily secon
 4. **Grounded understanding:** Summaries and chat cite transcript or article passages. Exact transcript search and semantic search coexist.
 5. **Unified memory:** Sources, passages, highlights, notes, authored insights, topics, connections, projects, and idea seeds share one retrieval contract. Generated content never becomes a silo beside Field Theory Library Markdown or Possible.
 6. **Connections:** Ready content and authored knowledge receive local semantic embeddings. Field Theory maintains explainable related-item scores, typed relationships, topic clusters, and a resurfacing feed that favors useful, non-obvious connections.
-7. **Corpus understanding:** Mike can ask across the whole library, compare sources, find contradictions, trace how a topic changed, and promote a cited answer into durable Library knowledge or an idea seed.
+7. **Corpus understanding:** The user can ask across the whole library, compare sources, find contradictions, trace how a topic changed, and promote a cited answer into durable Library knowledge or an idea seed.
 8. **Daily-use interface:** Inbox, Ready, Processing, and Needs attention states make freshness and failures visible. A bounded daily briefing and weekly synthesis resurface prior memory without creating another inbox to clear.
 9. **Agent-native recall:** The same retrieval service powers the browser, CLI, `ft ask`, and the Field Theory skill so relevant prior passages and authored notes can appear inside active Codex/Claude work.
 10. **Local-first control:** Source text, transcripts, embeddings, topics, notes, activity, and model outputs remain local. External network access is explicit in diagnostics and documentation.
@@ -136,9 +135,9 @@ Historical backfill ┘                                      |
 
 ## North-star outcome
 
-**Useful memory assists per active week:** a prior passage, authored note, insight, or connection surfaced by Field Theory that Mike opens, keeps, cites, promotes, or applies to current work.
+**Useful memory assists per active week:** a prior passage, authored note, insight, or connection surfaced by Field Theory that the user opens, keeps, cites, promotes, or applies to current work.
 
-The upgrade is successful when Field Theory brings the right prior idea into the current task without Mike hunting for it. Processing volume, embedding coverage, and cluster counts are health metrics, not the product outcome.
+The upgrade is successful when Field Theory brings the right prior idea into the current task without the user hunting for it. Processing volume, embedding coverage, and cluster counts are health metrics, not the product outcome.
 
 ## Autoplan Phase 1: CEO review
 
@@ -154,7 +153,7 @@ The upgrade is successful when Field Theory brings the right prior idea into the
 | Eager historical processing is worthwhile | Rejected | Cheaply index history, process recent/important/queried sources first, and keep backfill outside the daily inbox. |
 | Local embeddings are operationally straightforward | Unproven | Specify provider, hardware envelope, installation, versioning, cancellation, rebuild, and keyword-only degradation. |
 
-Premise gate: confirmed by Mike's explicit instruction that Field Theory exists to help build a second brain and should surface content and interesting connections. The plan now defines that outcome as useful prior memory entering active work, not generic read-later parity.
+Premise gate: confirmed by the product goal that Field Theory exists to help build a second brain and should surface content and interesting connections. The plan now defines that outcome as useful prior memory entering active work, not generic read-later parity.
 
 ### What already exists
 
@@ -184,7 +183,7 @@ THIS PLAN
 
 12-MONTH IDEAL
   Field Theory notices the active task, retrieves a few defensible prior memories,
-  explains why they matter, and learns from Mike's keep/dismiss/apply decisions
+  explains why they matter, and learns from the user's keep/dismiss/apply decisions
   without requiring another inbox or surrendering local custody.
 ```
 
@@ -232,7 +231,7 @@ This is sequencing, not scope reduction. It validates the second-brain loop befo
 |---|---|---|
 | A polished unread pile grows faster than it is used | Critical | Bounded inbox, cheap triage, lifecycle states, useful-assist metric, seven-day trial. |
 | Content becomes a third silo beside Library and Possible | Critical | Unified retrieval and explicit authority/promotion rules are P1 prerequisites. |
-| Generated summaries outweigh Mike's own thinking | High | Authored nodes rank higher; source/provenance labels are mandatory. |
+| Generated summaries outweigh the user's own thinking | High | Authored nodes rank higher; source/provenance labels are mandatory. |
 | Corpus answers hallucinate across sources | High | Passage-level retrieval, cited source reasons, answer refusal, support validation. |
 | Continuous sync creates retry storms or stale trust | High | Bounded cadence, exponential backoff, truthful sync status, degraded manual capture. |
 | Clusters are obvious, unstable, or misleading | High | Versioned builds, small-k evaluation, unclustered state, feedback, cited explanations. |
@@ -246,7 +245,7 @@ Included: unified memory, corpus retrieval/chat, authored knowledge nodes, proje
 
 ### NOT in scope
 
-- Hosted accounts, collaboration, and cloud synchronization: they do not improve Mike's private second-brain loop and expand the security boundary.
+- Hosted accounts, collaboration, and cloud synchronization: they do not improve the private second-brain loop and expand the security boundary.
 - Native mobile applications and share extensions: manual URL and X capture cover the initial workflow; capture adapters leave a future seam.
 - Autonomous writes into projects or published materials: Field Theory may propose and draft, but promotion remains explicit.
 - A general web crawler: extraction remains bounded to user-saved URLs with strict safety limits.
@@ -286,7 +285,7 @@ Phase 1 status: complete. Premises confirmed through the user's explicit second-
 |---|---|---|---|---|---|---|
 | 1 | CEO | Reframe the outcome around useful memory assists | Mechanical | Completeness | A second brain must change recall and application, not merely process documents. | Artifact-count north star |
 | 2 | CEO | Add a unified memory and retrieval contract | Mechanical | DRY | Existing Library, ask, content, ideas, and agent surfaces must not become separate silos. | Content-only index |
-| 3 | CEO | Make authored knowledge first-class and higher weighted | Mechanical | Completeness | Mike's observations are more durable and intentional than automatic summaries. | Source-only graph |
+| 3 | CEO | Make authored knowledge first-class and higher weighted | Mechanical | Completeness | User-authored observations are more durable and intentional than automatic summaries. | Source-only graph |
 | 4 | CEO | Add corpus synthesis and agent retrieval | Mechanical | Completeness | The highest-value recall happens across sources and inside active work. | Item-only chat |
 | 5 | CEO | Bound the inbox and prioritize recent/explicit work | Mechanical | Pragmatic | Continuous ingestion must not increase attention debt or block on history. | Eager full backfill |
 | 6 | CEO | Keep X as one capture adapter | Mechanical | Explicit | Honest degraded operation requires a stable non-X input contract. | X-coupled product identity |
@@ -297,7 +296,7 @@ Phase 1 status: complete. Premises confirmed through the user's explicit second-
 | 11 | Design | Gate capabilities independently by available artifact | Mechanical | Explicit | Text, search, notes, chat, summary, semantic recall, and clusters become useful at different stages. | One global Ready gate |
 | 12 | Design | Use editorial topic and connection lists | Taste | Explicit | Text-first evidence matches the calm reader and stays accessible on mobile. | Force-directed graph |
 | 13 | Design | Reduce visible lifecycle actions to Keep, Dismiss, and Applied | Taste | Pragmatic | New/Seen can be derived and Archive can remain a filter, avoiding filing work. | Six manual lifecycle states |
-| 14 | Design | Make authored memory a passage-attached workflow | Mechanical | Completeness | A second brain must distinguish Mike's observation from generated prose and preserve evidence. | One freeform item note only |
+| 14 | Design | Make authored memory a passage-attached workflow | Mechanical | Completeness | A second brain must distinguish the user's observation from generated prose and preserve evidence. | One freeform item note only |
 | 15 | Eng | Keep sql.js only behind batched checkpoints and performance gates | Taste | Pragmatic | The current file is directly compatible and avoids a risky backend rewrite; full-export-per-write must be removed and native SQLite remains the measured fallback. | Immediate repository rewrite |
 | 16 | Eng | Add fenced, atomic, prioritized DAG jobs | Mechanical | Explicit | A stale worker must never promote output, and recent/manual work must outrank backfill. | FIFO stage chaining |
 | 17 | Eng | Project authoritative stores into a rebuildable memory index | Mechanical | DRY | Library, bookmarks, content, and ideas retain ownership while every surface shares ranking. | Cross-store mega-query or duplicated indexes |
@@ -716,7 +715,7 @@ Phase 3 status: complete. The implementation has explicit storage gates, fenced 
 
 ## Autoplan Phase 3.5: developer-experience review
 
-Product type: local-first CLI plus private web application and agent integration. Primary persona: Mike as a technical power user who wants useful memory without operating a data pipeline. Initial time to first useful result is 10–60+ minutes because the documented path requires tool installation and a historical gap pass; target is under two minutes for existing memory and under five minutes for a newly supported captioned/readable source.
+Product type: local-first CLI plus private web application and agent integration. Primary persona: a technical power user who wants useful memory without operating a data pipeline. Initial time to first useful result is 10–60+ minutes because the documented path requires tool installation and a historical gap pass; target is under two minutes for existing memory and under five minutes for a newly supported captioned/readable source.
 
 ### Developer journey map
 
