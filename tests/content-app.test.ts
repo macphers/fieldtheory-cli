@@ -27,6 +27,7 @@ test('content app starts an authenticated loopback server and closes cleanly', a
       open: false,
       pollMs: 25,
       syncBookmarks: async (options): Promise<SyncResult> => new Promise((_resolve, reject) => {
+        assert.equal(options.maxPages, 3);
         options.signal?.addEventListener('abort', () => {
           syncAborted = true;
           reject(options.signal?.reason);
