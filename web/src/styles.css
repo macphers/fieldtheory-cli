@@ -25,6 +25,10 @@ a { color: inherit; }
 .source-line a { text-decoration: none; }
 .source-line a:hover { text-decoration: underline; }
 .youtube-mark { display: inline-block; width: 14px; height: 10px; margin-right: 7px; border-radius: 3px; background: #e52828; vertical-align: -1px; }
+.article-mark { display: inline-block; width: 10px; height: 12px; margin-right: 7px; border: 1px solid #85877d; border-radius: 2px; vertical-align: -2px; }
+.article-intro { margin: 28px 0 18px; padding: 22px 24px; border: 1px solid #deddd5; border-radius: 14px; background: rgba(255,255,255,.18); }
+.article-intro p { margin: 0; }
+.article-intro .eyebrow { margin-bottom: 5px; color: #7d7d74; text-transform: uppercase; letter-spacing: .1em; font-size: 11px; font-weight: 700; }
 
 .player-frame { overflow: hidden; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; background: #202321; box-shadow: 0 1px 0 rgba(0,0,0,.08); }
 .player-frame iframe { width: 100%; height: 100%; border: 0; }

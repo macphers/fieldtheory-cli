@@ -32,7 +32,12 @@ const blockedItem = {
   ...baseItem, canonicalId: 'youtube:fixtureBlocked', videoId: 'fixtureBlocked', canonicalUrl: 'https://www.youtube.com/watch?v=fixtureBlocked', title: 'A Video Needing Attention', status: 'blocked', chapters: [], overview: [], details: [],
   jobs: [{ id: 'job-blocked', itemId: 'youtube:fixtureBlocked', stage: 'transcript', state: 'blocked', attemptCount: 1, lastErrorCode: 'binary_missing', lastErrorDetail: 'whisper.cpp is not installed.' }],
 };
-const items = [readyItem, processingItem, blockedItem];
+const articleItem = {
+  ...baseItem, type: 'article', canonicalId: 'article:x:fixtureArticle', canonicalUrl: 'https://x.com/example/article/fixtureArticle', title: 'A Saved Article About Agency', creator: 'Example Author', durationMs: 240_000, status: 'ready', jobs: [],
+  sourceRefs: [{ ...sourceRefs[0], sourceUrl: 'https://x.com/example/article/fixtureArticle' }],
+  chapters: [{ startMs: 0, endMs: 180_000, label: 'The central idea', source: 'creator' }], overview: readyItem.overview, details: readyItem.details,
+};
+const items = [readyItem, articleItem, processingItem, blockedItem];
 
 async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -182,7 +187,7 @@ test('13 note conflicts preserve the draft and explain recovery', async ({ page 
 
 test('14 library search opens the matching transcript segment', async ({ page }) => {
   await loadLibrary(page, 1280, 900);
-  await page.getByLabel('Search saved videos').fill('mechanism');
+  await page.getByLabel('Search saved sources').fill('mechanism');
   const result = page.getByRole('button', { name: /1:00.*A Prepared Test Conversation.*practical mechanism/ });
   await expect(result).toBeVisible();
   await result.click();
@@ -199,4 +204,15 @@ test('15 related items stay hidden until requested and open the selected page', 
   await page.getByRole('button', { name: 'Find related' }).click();
   await page.getByRole('button', { name: new RegExp(`${processingItem.title}.*42%`) }).click();
   await expect(page.getByRole('heading', { name: processingItem.title })).toBeVisible();
+});
+
+test('16 enriched X articles render as reading pages without a video player', async ({ page }) => {
+  await loadLibrary(page, 1280, 900); await openItem(page, articleItem.title);
+  await expect(page.getByText('Saved article', { exact: true })).toBeVisible();
+  await expect(page.getByText('4 min read')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Sections' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Article' })).toBeVisible();
+  await expect(page.getByTitle(articleItem.title)).toHaveCount(0);
+  await expect(page.getByLabel('Ask about this article')).toBeEnabled();
+  await expectNoHorizontalOverflow(page);
 });

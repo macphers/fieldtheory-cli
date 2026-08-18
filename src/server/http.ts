@@ -8,6 +8,7 @@ import type { ProcessingStage } from '../jobs/state-machine.js';
 import { ConfirmationChallenges, LocalCapabilitySessions, parseCookies } from './security.js';
 
 const REQUIRED_STAGES: readonly ProcessingStage[] = ['metadata', 'transcript', 'chapters', 'summary'];
+const requiredStages = (item: { type: string }): readonly ProcessingStage[] => item.type === 'article' ? ['chapters', 'summary'] : REQUIRED_STAGES;
 const MAX_BODY_BYTES = 1024 * 1024;
 
 interface ApiErrorBody {
@@ -152,7 +153,7 @@ export async function startContentServer(options: ContentServerOptions): Promise
         const offset = integerQuery(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
         if (limit === null || offset === null) return apiError(response, 400, { code: 'invalid_pagination', message: 'Pagination values must be non-negative integers.', retryable: false, action: 'Use integer limit and offset query parameters.' });
         const items = await options.repository.listItems(limit, offset);
-        const data = await Promise.all(items.map(async (item) => ({ ...item, status: await options.repository.itemStatus(item.canonicalId, REQUIRED_STAGES) })));
+        const data = await Promise.all(items.map(async (item) => ({ ...item, status: await options.repository.itemStatus(item.canonicalId, requiredStages(item)) })));
         return json(response, 200, { data, pagination: { limit, offset, count: data.length } });
       }
       if (request.method === 'GET' && url.pathname === '/api/v1/search') {
@@ -164,7 +165,7 @@ export async function startContentServer(options: ContentServerOptions): Promise
         const data = await Promise.all(hits.map(async (hit) => {
           let status = statuses.get(hit.item.canonicalId);
           if (!status) {
-            status = options.repository.itemStatus(hit.item.canonicalId, REQUIRED_STAGES);
+            status = options.repository.itemStatus(hit.item.canonicalId, requiredStages(hit.item));
             statuses.set(hit.item.canonicalId, status);
           }
           return { ...hit, item: { ...hit.item, status: await status } };
@@ -176,7 +177,7 @@ export async function startContentServer(options: ContentServerOptions): Promise
         const item = await options.repository.getItem(itemId);
         if (!item) return apiError(response, 404, { code: 'item_not_found', message: 'The requested content item does not exist.', retryable: false, action: 'Return to the library and select another item.' });
         const [note, jobs, status, chapterRecord, summary] = await Promise.all([
-          options.repository.getNote(itemId), options.repository.listJobs(itemId), options.repository.itemStatus(itemId, REQUIRED_STAGES),
+          options.repository.getNote(itemId), options.repository.listJobs(itemId), options.repository.itemStatus(itemId, requiredStages(item)),
           options.repository.getChapters(itemId), options.repository.getSummary(itemId),
         ]);
         return json(response, 200, { ...item, note, jobs, status, chapters: chapterRecord?.chapters ?? [], overview: summary?.overview ?? [], details: summary?.details ?? [] });
@@ -197,7 +198,7 @@ export async function startContentServer(options: ContentServerOptions): Promise
         if (limit === null) return apiError(response, 400, { code: 'invalid_related_limit', message: 'Related-item limit must be an integer from 1 to 20.', retryable: false, action: 'Use an integer limit between 1 and 20.' });
         if (!await options.repository.getItem(relatedItemId)) return apiError(response, 404, { code: 'item_not_found', message: 'The requested content item does not exist.', retryable: false, action: 'Return to the library and select another item.' });
         const hits = await options.repository.relatedContent(relatedItemId, limit);
-        const data = await Promise.all(hits.map(async (hit) => ({ ...hit, item: { ...hit.item, status: await options.repository.itemStatus(hit.item.canonicalId, REQUIRED_STAGES) } })));
+        const data = await Promise.all(hits.map(async (hit) => ({ ...hit, item: { ...hit.item, status: await options.repository.itemStatus(hit.item.canonicalId, requiredStages(hit.item)) } })));
         return json(response, 200, { data, method: 'local-tfidf-v1' });
       }
       const noteItemId = pathItemId(url.pathname, 'note');
