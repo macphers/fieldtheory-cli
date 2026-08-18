@@ -3,8 +3,17 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { startContentApp } from '../src/content/app.js';
+import { mergeIndexedArticleContent, startContentApp } from '../src/content/app.js';
 import type { SyncResult } from '../src/graphql-bookmarks.js';
+
+test('merges SQLite-only linked article enrichment into cached bookmarks for discovery', () => {
+  const bookmarks = [{ id: 'one', tweetId: 'one', url: 'https://x.com/example/status/1', text: 'Short link', links: ['https://example.com/article'], syncedAt: '2026-08-01T00:00:00.000Z' }];
+  const [merged] = mergeIndexedArticleContent(bookmarks, [{ id: 'one', articleTitle: 'Full article', articleText: 'The complete article body.', articleSite: 'Example', enrichedAt: '2026-08-02T00:00:00.000Z' }]);
+  assert.equal(merged.articleTitle, 'Full article');
+  assert.equal(merged.articleText, 'The complete article body.');
+  assert.equal(merged.articleSite, 'Example');
+  assert.equal(merged.enrichedAt, '2026-08-02T00:00:00.000Z');
+});
 
 test('content app starts an authenticated loopback server and closes cleanly', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'ft-content-app-'));

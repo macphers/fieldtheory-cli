@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { BookmarkRecord } from '../types.js';
+import { listBookmarks, type BookmarkTimelineItem } from '../bookmarks-db.js';
 import { readJsonLines } from '../fs.js';
 import { syncBookmarksGraphQL } from '../graphql-bookmarks.js';
 import { detectAvailableEngines, resolveEngine } from '../engine.js';
@@ -35,6 +36,21 @@ export interface RunningContentApp {
   origin: string;
   bootstrapUrl: string;
   close(): Promise<void>;
+}
+
+export function mergeIndexedArticleContent(bookmarks: BookmarkRecord[], indexed: Array<Pick<BookmarkTimelineItem, 'id' | 'articleTitle' | 'articleText' | 'articleSite' | 'enrichedAt'>>): BookmarkRecord[] {
+  const articles = new Map(indexed.filter((item) => item.articleText?.trim()).map((item) => [item.id, item]));
+  return bookmarks.map((bookmark) => {
+    const article = articles.get(bookmark.id);
+    if (!article) return bookmark;
+    return {
+      ...bookmark,
+      articleTitle: article.articleTitle ?? bookmark.articleTitle,
+      articleText: article.articleText ?? bookmark.articleText,
+      articleSite: article.articleSite ?? bookmark.articleSite,
+      enrichedAt: article.enrichedAt ?? bookmark.enrichedAt,
+    };
+  });
 }
 
 async function settleAppWork(work: Promise<unknown>[], deadline: number, onTimeout: () => void): Promise<void> {
@@ -114,7 +130,13 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
     const worker = new DurableJobWorker({ repository, workerId: `app-${process.pid}-${randomUUID()}`, handlers: orchestrator.handlers() });
 
     const discoverCached = async (): Promise<void> => {
-      const bookmarks = await readJsonLines<BookmarkRecord>(twitterBookmarksCachePath());
+      let bookmarks = await readJsonLines<BookmarkRecord>(twitterBookmarksCachePath());
+      try {
+        const indexed = await listBookmarks({ limit: Math.max(1, bookmarks.length) });
+        bookmarks = mergeIndexedArticleContent(bookmarks, indexed);
+      } catch (error) {
+        onStatus(`Linked-article index unavailable; continuing with the bookmark cache (${error instanceof Error ? error.message : String(error)}).`);
+      }
       const result = await orchestrator.discover(bookmarks);
       onStatus(`Knowledge library: ${result.discovered} saved source${result.discovered === 1 ? '' : 's'} discovered.`);
     };

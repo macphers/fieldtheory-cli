@@ -101,6 +101,19 @@ test('discovers enriched X articles as private source documents', () => {
   assert.equal(article.sourceRefs[0].bookmarkId, 'article-1');
 });
 
+test('deduplicates indexed linked articles by their external source URL', () => {
+  const source = 'https://example.com/essays/durable-idea';
+  const articles = discoverArticleContent([
+    { id: 'linked-1', tweetId: 'linked-1', url: 'https://x.com/example/status/1', text: 'Worth reading', links: [source], syncedAt: '2026-08-01T00:00:00.000Z', articleTitle: 'A Durable Idea', articleText: 'The complete linked article.', articleSite: 'Example Essays' },
+    { id: 'linked-2', tweetId: 'linked-2', url: 'https://x.com/example/status/2', text: 'Also saved', links: [`${source}#discussion`], syncedAt: '2026-08-02T00:00:00.000Z', articleTitle: 'A Durable Idea', articleText: 'The complete linked article.', articleSite: 'Example Essays' },
+  ]);
+  assert.equal(articles.length, 1);
+  assert.match(articles[0].canonicalId, /^article:web:[a-f0-9]{24}$/);
+  assert.equal(articles[0].canonicalUrl, source);
+  assert.equal(articles[0].sourceCreator, 'Example Essays');
+  assert.deepEqual(articles[0].sourceRefs.map((ref) => ref.bookmarkId), ['linked-1', 'linked-2']);
+});
+
 test('discovers supported podcast episode pages without treating Spotify tracks as podcasts', () => {
   const episode = 'https://serve.podhome.fm/episodepage/CitadelDispatch/cd207-example?utm_source=x';
   const normalized = normalizePodcastUrl(episode);

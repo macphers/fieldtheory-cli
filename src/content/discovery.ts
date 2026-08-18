@@ -81,20 +81,43 @@ export function discoverYouTubeContent(bookmarks: BookmarkRecord[]): DiscoveredC
 }
 
 export function discoverArticleContent(bookmarks: BookmarkRecord[]): DiscoveredContentItem[] {
-  return bookmarks.flatMap((bookmark) => {
+  const items = new Map<string, DiscoveredContentItem>();
+  for (const bookmark of bookmarks) {
     const sourceText = bookmark.articleText?.trim();
-    if (!sourceText) return [];
-    return [{
-      canonicalId: `article:x:${bookmark.id}` as const,
-      canonicalUrl: bookmark.url,
+    if (!sourceText) continue;
+    const externalUrl = (bookmark.links ?? []).flatMap((value) => {
+      try {
+        const url = new URL(value);
+        const host = url.hostname.toLowerCase().replace(/^www\./, '');
+        if (['x.com', 'twitter.com'].includes(host) || host.endsWith('.x.com') || host.endsWith('.twitter.com') || normalizeYouTubeUrl(value) || normalizePodcastUrl(value)) return [];
+        url.hash = '';
+        for (const key of [...url.searchParams.keys()]) if (/^(?:utm_|ref$)/i.test(key)) url.searchParams.delete(key);
+        return [url.toString()];
+      } catch { return []; }
+    })[0];
+    const canonicalUrl = externalUrl ?? bookmark.url;
+    const canonicalId = externalUrl
+      ? `article:web:${createHash('sha256').update(canonicalUrl).digest('hex').slice(0, 24)}` as const
+      : `article:x:${bookmark.id}` as const;
+    const existing = items.get(canonicalId) ?? {
+      canonicalId,
+      canonicalUrl,
       type: 'article' as const,
       sourceText,
-      sourceTitle: bookmark.articleTitle?.trim() || bookmark.text.trim().slice(0, 120) || 'Saved X article',
-      sourceCreator: bookmark.authorName?.trim() || bookmark.authorHandle?.trim() || bookmark.articleSite?.trim() || 'Unknown author',
+      sourceTitle: bookmark.articleTitle?.trim() || bookmark.text.trim().slice(0, 120) || (externalUrl ? 'Saved article' : 'Saved X article'),
+      sourceCreator: externalUrl
+        ? bookmark.articleSite?.trim() || bookmark.authorName?.trim() || bookmark.authorHandle?.trim() || 'Unknown publisher'
+        : bookmark.authorName?.trim() || bookmark.authorHandle?.trim() || bookmark.articleSite?.trim() || 'Unknown author',
       sourceLanguage: bookmark.language?.trim() || 'en',
-      sourceRefs: [{ bookmarkId: bookmark.id, bookmarkUrl: bookmark.url, discoveredAt: bookmark.bookmarkedAt ?? bookmark.syncedAt, sourceUrl: bookmark.url }],
-    }];
-  }).sort((left, right) => left.canonicalId.localeCompare(right.canonicalId));
+      sourceRefs: [],
+    };
+    existing.sourceRefs.push({ bookmarkId: bookmark.id, bookmarkUrl: bookmark.url, discoveredAt: bookmark.bookmarkedAt ?? bookmark.syncedAt, sourceUrl: canonicalUrl });
+    items.set(canonicalId, existing);
+  }
+  return Array.from(items.values()).map((item) => ({
+    ...item,
+    sourceRefs: item.sourceRefs.sort((a, b) => a.discoveredAt.localeCompare(b.discoveredAt) || a.bookmarkId.localeCompare(b.bookmarkId)),
+  })).sort((left, right) => left.canonicalId.localeCompare(right.canonicalId));
 }
 
 export function discoverPodcastContent(bookmarks: BookmarkRecord[]): DiscoveredContentItem[] {
