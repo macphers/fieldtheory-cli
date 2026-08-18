@@ -53,6 +53,7 @@ a { color: inherit; }
 .tabs { display: flex; gap: 24px; padding: 21px 26px 8px; }
 .tabs button { border: 0; background: transparent; padding: 0 0 8px; color: #77776f; cursor: pointer; }
 .tabs button[aria-selected="true"] { color: #2c2d28; font-weight: 650; }
+.tabs button:focus-visible { outline: 2px solid #77796e; outline-offset: 4px; border-radius: 2px; }
 .tabs button:disabled { opacity: .38; cursor: default; }
 .source-list { max-height: 380px; overflow: auto; padding: 0 14px 16px; scrollbar-color: #c9c8c0 transparent; }
 .source-row { width: 100%; display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: start; border: 0; border-radius: 10px; background: transparent; padding: 13px 14px; color: #30312c; text-align: left; cursor: pointer; line-height: 1.45; }
@@ -78,6 +79,7 @@ a { color: inherit; }
 .chat-citations { display: flex; gap: 6px; margin-top: 12px; }
 
 .composer { position: fixed; left: calc(72px + max(34px, (100vw - 72px - 780px) / 2)); bottom: 22px; width: min(calc(100vw - 72px - 68px), 780px); display: flex; align-items: center; gap: 14px; border: 1px solid #deddd5; border-radius: 999px; background: rgba(250,249,245,.94); box-shadow: 0 12px 36px rgba(42,43,37,.09); padding: 8px 10px 8px 20px; backdrop-filter: blur(14px); }
+.composer:focus-within { border-color: #8c8e82; box-shadow: 0 0 0 3px rgba(113, 116, 101, .16), 0 12px 36px rgba(42,43,37,.09); }
 .composer input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; padding: 8px 0; }
 .composer span { color: #85857d; font-size: 12px; white-space: nowrap; }
 .composer button { width: 34px; height: 34px; border: 0; border-radius: 50%; background: #4e5049; color: white; cursor: pointer; }

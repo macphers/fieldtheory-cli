@@ -59,3 +59,26 @@ test('content app close remains bounded when sync ignores cancellation', async (
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('content app prints the one-time URL when automatic browser launch fails', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ft-content-app-browser-fallback-'));
+  const previousData = process.env.FT_DATA_DIR;
+  const previousContent = process.env.FT_CONTENT_DIR;
+  process.env.FT_DATA_DIR = path.join(root, 'bookmarks');
+  process.env.FT_CONTENT_DIR = path.join(root, 'content');
+  const statuses: string[] = [];
+  try {
+    const app = await startContentApp({
+      sync: false,
+      onStatus: (message) => statuses.push(message),
+      openBrowser: async () => { throw new Error('launcher unavailable'); },
+    });
+    assert.ok(statuses.some((message) => message.includes('Could not open a browser automatically (launcher unavailable).')));
+    assert.ok(statuses.includes(`Open once: ${app.bootstrapUrl}`));
+    await app.close();
+  } finally {
+    if (previousData === undefined) delete process.env.FT_DATA_DIR; else process.env.FT_DATA_DIR = previousData;
+    if (previousContent === undefined) delete process.env.FT_CONTENT_DIR; else process.env.FT_CONTENT_DIR = previousContent;
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -92,6 +92,14 @@ test('ft search, stats, and status expose --json', () => {
   }
 });
 
+test('ft app doctor exposes --json', () => {
+  const program = buildCli();
+  const app = program.commands.find((command: any) => command.name() === 'app');
+  const doctor = app?.commands.find((command: any) => command.name() === 'doctor');
+  assert.ok(doctor, 'app doctor command should be registered');
+  assert.ok(doctor.options.some((option: any) => option.long === '--json'));
+});
+
 test('ft paths, current, state, recent, navigation aliases, library, commands, app, and install command groups are registered', () => {
   const program = buildCli();
   for (const name of [

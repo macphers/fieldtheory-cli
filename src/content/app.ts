@@ -26,7 +26,7 @@ export interface ContentAppOptions {
   env?: NodeJS.ProcessEnv;
   onStatus?: (message: string) => void;
   syncBookmarks?: typeof syncBookmarksGraphQL;
-  openBrowser?: (url: string) => void;
+  openBrowser?: (url: string) => void | Promise<void>;
   shutdownTimeoutMs?: number;
 }
 
@@ -46,12 +46,14 @@ async function settleAppWork(work: Promise<unknown>[], deadline: number, onTimeo
   if (timer) clearTimeout(timer);
 }
 
-export function openSystemBrowser(url: string, platform: NodeJS.Platform = process.platform): void {
+export function openSystemBrowser(url: string, platform: NodeJS.Platform = process.platform): Promise<void> {
   const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = platform === 'win32' ? ['/c', 'start', '', url] : [url];
-  const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
-  child.on('error', () => { /* The printed URL remains the fallback. */ });
-  child.unref();
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    child.once('spawn', () => { child.unref(); resolve(); });
+    child.once('error', reject);
+  });
 }
 
 async function optionalModel(engine: string | undefined, onStatus: (message: string) => void): Promise<EngineContentModel | undefined> {
@@ -152,7 +154,14 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
         .catch((error) => { onStatus(`Bookmark sync unavailable; using local cache (${error instanceof Error ? error.message : String(error)}).`); });
     }
 
-    if (options.open !== false) (options.openBrowser ?? openSystemBrowser)(server.bootstrapUrl);
+    if (options.open !== false) {
+      try {
+        await (options.openBrowser ?? openSystemBrowser)(server.bootstrapUrl);
+      } catch (error) {
+        onStatus(`Could not open a browser automatically (${error instanceof Error ? error.message : String(error)}).`);
+        onStatus(`Open once: ${server.bootstrapUrl}`);
+      }
+    }
     const activeServer = server;
     return {
       origin: activeServer.origin,
