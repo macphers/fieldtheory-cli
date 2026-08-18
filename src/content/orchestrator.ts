@@ -8,17 +8,18 @@ import { normalizeTranscript } from './knowledge-page.js';
 import type { ContentRepository, StoredContentItem } from './repository.js';
 import { buildChapters } from './synthesis/chapters.js';
 import { SynthesisPipeline, type SynthesisModel } from './synthesis/pipeline.js';
+import { buildExtractiveSummary } from './synthesis/extractive.js';
 import { TranscriptFallbackPipeline } from './transcripts/fallback.js';
 import { PodcastTranscriptPipeline } from './transcripts/podcast.js';
 import { TranscriptAcquisitionError, YtDlpTranscriptProvider } from './transcripts/yt-dlp.js';
 
-const IMPLEMENTATION_VERSION: Record<ProcessingStage, number> = { metadata: 1, transcript: 1, chapters: 1, summary: 1 };
+const IMPLEMENTATION_VERSION: Record<ProcessingStage, number> = { metadata: 1, transcript: 1, chapters: 2, summary: 2 };
 
 function hash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
-function articleSource(text: string, language: string) {
+export function articleSource(text: string, language: string) {
   const paragraphs = text.split(/\n\s*\n+/).map((value) => value.trim()).filter(Boolean);
   const blocks = paragraphs.length > 1 ? paragraphs : text.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((value) => value.trim()).filter(Boolean) ?? [text];
   let cursor = 0;
@@ -98,6 +99,37 @@ export class ContentOrchestrator {
     return { discovered: discovered.length, enqueued };
   }
 
+  async reconcile(): Promise<{ chapters: number; summaries: number; superseded: number }> {
+    const items = await this.options.repository.listItems(100_000, 0);
+    let chapters = 0; let summaries = 0; let superseded = 0;
+    for (const item of items) {
+      const [transcript, chapterRecord, summary, jobs] = await Promise.all([
+        this.options.repository.getTranscript(item.canonicalId),
+        this.options.repository.getChapters(item.canonicalId),
+        this.options.repository.getSummary(item.canonicalId),
+        this.options.repository.listJobs(item.canonicalId),
+      ]);
+      if (!transcript) continue;
+      const now = this.now().toISOString();
+      if (!chapterRecord || chapterRecord.transcriptContentHash !== transcript.transcript.contentHash) {
+        for (const job of jobs.filter((candidate) => candidate.stage === 'chapters' && candidate.implementationVersion < IMPLEMENTATION_VERSION.chapters && ['queued', 'retry_wait', 'failed', 'blocked', 'cancelled', 'interrupted'].includes(candidate.state))) {
+          if (job.state !== 'cancelled') { try { await this.options.repository.cancelJob(job.id, now); superseded += 1; } catch { /* already terminal */ } }
+        }
+        await this.options.repository.enqueueJob(item.canonicalId, 'chapters', jobInputFingerprint(item.canonicalId, 'chapters', [transcript.transcript.contentHash, hash(item.creatorChapters ?? [])], IMPLEMENTATION_VERSION.chapters), IMPLEMENTATION_VERSION.chapters, now, { priority: 80, resourceClass: 'cpu' });
+        chapters += 1;
+        continue;
+      }
+      if (!summary || summary.transcriptContentHash !== transcript.transcript.contentHash) {
+        for (const job of jobs.filter((candidate) => candidate.stage === 'summary' && candidate.implementationVersion < IMPLEMENTATION_VERSION.summary && ['queued', 'retry_wait', 'failed', 'blocked', 'cancelled', 'interrupted'].includes(candidate.state))) {
+          if (job.state !== 'cancelled') { try { await this.options.repository.cancelJob(job.id, now); superseded += 1; } catch { /* already terminal */ } }
+        }
+        await this.options.repository.enqueueJob(item.canonicalId, 'summary', jobInputFingerprint(item.canonicalId, 'summary', [transcript.transcript.contentHash, chapterRecord.artifactHash], IMPLEMENTATION_VERSION.summary), IMPLEMENTATION_VERSION.summary, now, { priority: 70, resourceClass: 'cpu' });
+        summaries += 1;
+      }
+    }
+    return { chapters, summaries, superseded };
+  }
+
   handlers(): Record<ProcessingStage, JobStageHandler> {
     return {
       metadata: async (job, signal) => {
@@ -109,9 +141,12 @@ export class ContentOrchestrator {
             ? await this.options.podcastPipeline!.acquireMetadata(item.canonicalUrl, signal)
             : await this.options.metadataProvider.acquireMetadata(item.canonicalUrl, signal);
           const now = this.now().toISOString();
-          await this.options.repository.upsertItem({ ...item, ...metadata, canonicalId: item.canonicalId, canonicalUrl: item.canonicalUrl, type: item.type, sourceRefs: item.sourceRefs, updatedAt: now });
+          const updatedItem = { ...item, ...metadata, canonicalId: item.canonicalId, canonicalUrl: item.canonicalUrl, type: item.type, sourceRefs: item.sourceRefs, updatedAt: now };
           const metadataHash = hash(metadata);
-          await this.options.repository.enqueueJob(item.canonicalId, 'transcript', jobInputFingerprint(item.canonicalId, 'transcript', [metadataHash], IMPLEMENTATION_VERSION.transcript), IMPLEMENTATION_VERSION.transcript, now);
+          return {
+            mutation: { kind: 'metadata' as const, item: updatedItem },
+            children: [{ stage: 'transcript' as const, inputFingerprint: jobInputFingerprint(item.canonicalId, 'transcript', [metadataHash], IMPLEMENTATION_VERSION.transcript), implementationVersion: IMPLEMENTATION_VERSION.transcript }],
+          };
         } catch (error) { throw stageError(error); }
       },
       transcript: async (job, signal) => {
@@ -123,10 +158,13 @@ export class ContentOrchestrator {
             ? await this.options.podcastPipeline!.acquire(item.canonicalUrl, item.language, signal, allowLong)
             : await this.options.transcriptPipeline.acquire(item.canonicalUrl, item.language, signal, allowLong);
           const now = this.now().toISOString();
-          await this.options.repository.upsertItem({ ...item, ...acquired.media, canonicalId: item.canonicalId, canonicalUrl: item.canonicalUrl, type: item.type, sourceRefs: item.sourceRefs, updatedAt: now });
-          await this.options.repository.saveTranscript({ itemId: item.canonicalId, artifactHash: acquired.transcript.contentHash, artifactPath: acquired.artifactPath, transcript: acquired.transcript, acquiredAt: now });
+          const updatedItem = { ...item, ...acquired.media, canonicalId: item.canonicalId, canonicalUrl: item.canonicalUrl, type: item.type, sourceRefs: item.sourceRefs, updatedAt: now };
+          const transcriptRecord = { itemId: item.canonicalId, artifactHash: acquired.transcript.contentHash, artifactPath: acquired.artifactPath, transcript: acquired.transcript, acquiredAt: now };
           const creatorHash = hash(acquired.media.creatorChapters ?? []);
-          await this.options.repository.enqueueJob(item.canonicalId, 'chapters', jobInputFingerprint(item.canonicalId, 'chapters', [acquired.transcript.contentHash, creatorHash], IMPLEMENTATION_VERSION.chapters), IMPLEMENTATION_VERSION.chapters, now);
+          return {
+            mutation: { kind: 'transcript' as const, item: updatedItem, transcript: transcriptRecord },
+            children: [{ stage: 'chapters' as const, inputFingerprint: jobInputFingerprint(item.canonicalId, 'chapters', [acquired.transcript.contentHash, creatorHash], IMPLEMENTATION_VERSION.chapters), implementationVersion: IMPLEMENTATION_VERSION.chapters }],
+          };
         } catch (error) { throw stageError(error); }
       },
       chapters: async (job, signal) => {
@@ -134,31 +172,21 @@ export class ContentOrchestrator {
           const [item, transcript] = await Promise.all([this.requiredItem(job.itemId), this.options.repository.getTranscript(job.itemId)]);
           if (!transcript) throw new Error('Current transcript is missing.');
           const result = await buildChapters(transcript.transcript, item.durationMs, item.creatorChapters, this.options.model, signal);
-          await this.options.repository.replaceChapters({ itemId: item.canonicalId, transcriptContentHash: transcript.transcript.contentHash, artifactHash: result.artifactHash, chapters: result.chapters, generation: { source: result.source, provider: this.options.model?.provider ?? 'creator' } });
+          const chapterRecord = { itemId: item.canonicalId, transcriptContentHash: transcript.transcript.contentHash, artifactHash: result.artifactHash, chapters: result.chapters, generation: { source: result.source, provider: this.options.model?.provider ?? 'creator' } };
           const now = this.now().toISOString();
-          await this.options.repository.enqueueJob(item.canonicalId, 'summary', jobInputFingerprint(item.canonicalId, 'summary', [transcript.transcript.contentHash, result.artifactHash], IMPLEMENTATION_VERSION.summary), IMPLEMENTATION_VERSION.summary, now);
+          return {
+            mutation: { kind: 'chapters' as const, chapters: chapterRecord },
+            children: [{ stage: 'summary' as const, inputFingerprint: jobInputFingerprint(item.canonicalId, 'summary', [transcript.transcript.contentHash, result.artifactHash], IMPLEMENTATION_VERSION.summary), implementationVersion: IMPLEMENTATION_VERSION.summary }],
+          };
         } catch (error) { throw stageError(error); }
       },
       summary: async (job, signal) => {
         try {
-          if (!this.options.model) throw new JobStageError('model_missing', 'No Field Theory synthesis model is configured.', 'blocked');
           const [transcript, chapterRecord] = await Promise.all([this.options.repository.getTranscript(job.itemId), this.options.repository.getChapters(job.itemId)]);
           if (!transcript || !chapterRecord) throw new Error('Transcript or chapters are missing.');
-          const pipeline = new SynthesisPipeline({
-            model: this.options.model,
-            checkSupport: this.options.model.checkSupport.bind(this.options.model),
-            ...(this.options.model.checkSupportBatch ? { checkSupportBatch: this.options.model.checkSupportBatch.bind(this.options.model) } : {}),
-            ...(this.options.model.repairClaim ? { repairClaim: this.options.model.repairClaim.bind(this.options.model) } : {}),
-            now: this.now,
-            loadChunk: async (artifactId) => (await this.options.repository.getSynthesisChunk(artifactId))?.draft ?? null,
-            saveChunk: async (artifactId, chunk, draft, artifactHash, createdAt) => this.options.repository.saveSynthesisChunk({
-              artifactId, itemId: job.itemId, transcriptContentHash: transcript.transcript.contentHash, chunkId: chunk.id,
-              provider: this.options.model!.provider, ...(this.options.model!.model ? { model: this.options.model!.model } : {}),
-              promptVersion: 1, draft, artifactHash, createdAt,
-            }),
-          });
-          const synthesis = await pipeline.synthesize(transcript.transcript, chapterRecord.chapters, signal);
-          await this.options.repository.saveSummary({ itemId: job.itemId, transcriptContentHash: synthesis.transcriptContentHash, chaptersArtifactHash: chapterRecord.artifactHash, overview: synthesis.overview, details: synthesis.details, provider: synthesis.provider, ...(synthesis.model ? { model: synthesis.model } : {}), promptVersion: synthesis.promptVersion, artifactHash: synthesis.artifactHash, validationState: 'supported', createdAt: synthesis.createdAt, promotedAt: synthesis.createdAt });
+          if (signal.aborted) throw signal.reason ?? new Error('Summary generation cancelled.');
+          const synthesis = buildExtractiveSummary(transcript.transcript, chapterRecord.chapters, this.now());
+          return { mutation: { kind: 'summary' as const, summary: { itemId: job.itemId, transcriptContentHash: transcript.transcript.contentHash, chaptersArtifactHash: chapterRecord.artifactHash, overview: synthesis.overview, details: synthesis.details, provider: 'local-extractive', promptVersion: 1, artifactHash: synthesis.artifactHash, validationState: 'supported' as const, createdAt: synthesis.createdAt, promotedAt: synthesis.createdAt } } };
         } catch (error) { throw stageError(error); }
       },
     };

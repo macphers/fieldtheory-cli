@@ -12,3 +12,4 @@ Every project-owned Markdown file must appear here. CI verifies path coverage an
 | `SECURITY.md` | Vulnerability reporting and security expectations. | Active | Review annually and after security-boundary changes. |
 | `docs/harness.md` | CI harness architecture, local commands, and GitHub setup. | Active | Review whenever a harness check or required secret changes. |
 | `docs/inventory.md` | Canonical inventory of project-owned Markdown. | Active | Update in the same commit as any Markdown add, move, or removal. |
+| `docs/second-brain-upgrade-plan.md` | Reviewed implementation plan for continuous ingestion, semantic memory, clustering, and daily-use knowledge workflows. | Active | Review throughout the second-brain upgrade and archive after release. |

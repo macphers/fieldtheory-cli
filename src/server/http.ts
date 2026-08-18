@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ContentRepository } from '../content/repository.js';
 import type { ProcessingStage } from '../jobs/state-machine.js';
+import type { MemoryLifecycle, MemoryService } from '../memory/service.js';
 import { ConfirmationChallenges, LocalCapabilitySessions, parseCookies } from './security.js';
 
 const REQUIRED_STAGES: readonly ProcessingStage[] = ['metadata', 'transcript', 'chapters', 'summary'];
@@ -28,6 +29,7 @@ export interface ContentServerOptions {
   now?: () => number;
   staticDir?: string;
   chat?: { answer(itemId: string, question: string, signal?: AbortSignal): Promise<{ answer: string; citations: Array<{ segmentId: string; startMs: number; endMs: number }>; refused: boolean }> };
+  memory?: MemoryService;
   cancelJob?: (jobId: string) => Promise<void>;
 }
 
@@ -148,6 +150,107 @@ export async function startContentServer(options: ContentServerOptions): Promise
         return;
       }
       if (request.method === 'GET' && url.pathname === '/api/v1/session') return json(response, 200, { csrf: session.csrf });
+      if (request.method === 'GET' && url.pathname === '/api/v1/memory/today') {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Unified memory is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const cards = await options.memory.today(integerQuery(url.searchParams.get('limit'), 3, 1, 7) ?? 3);
+        return json(response, 200, { data: cards.map((card, index) => ({
+          id: `today:${card.item.canonicalId}`,
+          kind: card.lifecycle === 'kept' || card.lifecycle === 'applied' ? 'prior_memory' : 'newly_ready',
+          label: card.lifecycle === 'kept' ? 'Kept memory' : card.lifecycle === 'applied' ? 'Applied before' : card.capabilities.summary ? 'Ready to skim' : 'Text ready',
+          title: card.item.title,
+          whyNow: card.reason,
+          provenance: 'generated',
+          itemId: card.item.canonicalId,
+          evidence: [{ sourceId: card.item.canonicalId, sourceTitle: card.item.title, preview: card.capabilities.summary ? 'A cited digest is ready.' : card.capabilities.text ? 'The source text is searchable now.' : 'Recently captured source.', reason: index === 0 ? 'Highest-value ready memory today.' : card.reason }],
+        })) });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/v1/memory/search') {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Unified memory is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const query = url.searchParams.get('q')?.trim() ?? '';
+        const limit = integerQuery(url.searchParams.get('limit'), 20, 1, 100);
+        if (!query || query.length > 500 || limit === null) return apiError(response, 400, { code: 'invalid_search', message: 'Memory search requires a query up to 500 characters.', retryable: false, action: 'Enter a shorter search query.' });
+        return json(response, 200, { data: await options.memory.search(query, limit), query });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/v1/memory/topics') {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Topics are unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const topics = await options.memory.topics(integerQuery(url.searchParams.get('limit'), 12, 1, 50) ?? 12);
+        return json(response, 200, { data: topics.map((topic) => ({ ...topic, description: topic.explanation, representativeTerms: [topic.label.toLowerCase()] })) });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/v1/memory/connections') {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Connections are unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const connections = await options.memory.connections(integerQuery(url.searchParams.get('limit'), 12, 1, 50) ?? 12);
+        return json(response, 200, { data: connections.map((connection) => ({
+          id: connection.id,
+          fromId: connection.from.canonicalId,
+          fromTitle: connection.from.title,
+          toId: connection.to.canonicalId,
+          toTitle: connection.to.title,
+          relation: connection.relationship,
+          explanation: connection.explanation,
+          confidence: connection.score,
+          provenance: 'generated',
+          evidence: [{ sourceId: connection.from.canonicalId, sourceTitle: connection.from.title, preview: connection.sharedTerms.join(', '), reason: connection.explanation }],
+        })) });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/v1/memory/sync/status') {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Sync status is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const status = (await options.memory.status()).sync;
+        return json(response, 200, { state: status.lastError && status.lastError !== 'sync_in_progress' ? 'error' : status.lastError === 'sync_in_progress' ? 'syncing' : status.lastSuccessAt ? 'idle' : 'stale', lastSuccessAt: status.lastSuccessAt, message: status.paused ? 'Continuous capture is paused.' : status.lastError });
+      }
+      if (request.method === 'GET' && url.pathname === '/api/v1/memory/status') {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Memory status is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        return json(response, 200, await options.memory.status());
+      }
+      if (request.method === 'POST' && url.pathname === '/api/v1/memory/captures') {
+        if (!options.memory) return apiError(response, 503, { code: 'manual_capture_unavailable', message: 'Manual capture is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const body = await readJson(request) as { url?: unknown };
+        if (typeof body.url !== 'string' || body.url.length > 4_096) return apiError(response, 400, { code: 'invalid_capture_url', message: 'Capture requires one HTTP or HTTPS URL.', retryable: false, action: 'Paste a complete source URL.' });
+        try {
+          const result = await options.memory.capture(body.url);
+          return json(response, 202, { state: 'preparing', message: 'Captured. Field Theory is preparing text and a digest in the background.', originalUrl: body.url, ...(result.discovered === 1 ? {} : { state: 'duplicate' }) });
+        }
+        catch (error) {
+          const unsafe = error instanceof Error && (error.message === 'unsafe_capture_url' || error instanceof TypeError);
+          return apiError(response, unsafe ? 400 : 422, { code: unsafe ? 'unsafe_capture_url' : 'unsupported_capture', message: unsafe ? 'The capture URL is not allowed.' : 'Field Theory could not recognize this source yet.', retryable: false, action: unsafe ? 'Use a public HTTP or HTTPS URL without embedded credentials.' : 'Try a YouTube or supported podcast episode URL; article extraction support is shown in `ft memory doctor`.' });
+        }
+      }
+      if (request.method === 'POST' && (url.pathname === '/api/v1/memory/ask' || url.pathname === '/api/v1/memory/corpus/ask')) {
+        if (!options.memory) return apiError(response, 503, { code: 'corpus_chat_unavailable', message: 'Corpus chat is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const body = await readJson(request) as { question?: unknown };
+        if (typeof body.question !== 'string' || body.question.trim().length === 0 || body.question.length > 2_000) return apiError(response, 400, { code: 'invalid_question', message: 'Ask requires a question between 1 and 2,000 characters.', retryable: false, action: 'Shorten the question and try again.' });
+        const result = await options.memory.ask(body.question.trim());
+        return json(response, 200, {
+          answer: result.answer,
+          refused: result.refused,
+          evidence: result.citations.map((citation) => ({ sourceId: citation.itemId, sourceTitle: citation.title, preview: citation.excerpt, segmentId: citation.segmentId, startMs: citation.startMs, location: citation.startMs !== undefined ? `${Math.floor(citation.startMs / 60_000)}:${String(Math.floor(citation.startMs / 1_000) % 60).padStart(2, '0')}` : citation.provenance, reason: `Matched ${citation.provenance}.` })),
+        });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/v1/memory/feedback') {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Connection feedback is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const body = await readJson(request) as { connectionId?: unknown; value?: unknown };
+        if (typeof body.connectionId !== 'string' || !['useful', 'obvious', 'wrong'].includes(String(body.value))) return apiError(response, 400, { code: 'invalid_feedback', message: 'Feedback requires a connection ID and useful, obvious, or wrong.', retryable: false, action: 'Choose one of the available feedback actions.' });
+        await options.memory.recordFeedback(body.connectionId, body.value as 'useful' | 'obvious' | 'wrong');
+        return json(response, 200, { recorded: true });
+      }
+      const memoryFeedbackMatch = url.pathname.match(/^\/api\/v1\/memory\/(.+)\/feedback$/);
+      if (request.method === 'POST' && memoryFeedbackMatch) {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Memory feedback is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const id = decodeURIComponent(memoryFeedbackMatch[1]);
+        const body = await readJson(request) as { action?: unknown };
+        if (['useful', 'obvious', 'wrong'].includes(String(body.action))) await options.memory.recordFeedback(id, body.action as 'useful' | 'obvious' | 'wrong');
+        else if (['keep', 'dismiss', 'applied'].includes(String(body.action))) await options.memory.setLifecycle(id.replace(/^today:/, ''), (body.action === 'keep' ? 'kept' : body.action === 'dismiss' ? 'dismissed' : 'applied') as MemoryLifecycle);
+        else return apiError(response, 400, { code: 'invalid_feedback', message: 'Unknown memory feedback action.', retryable: false, action: 'Choose keep, dismiss, applied, useful, obvious, or wrong.' });
+        return json(response, 200, { recorded: true });
+      }
+      const lifecycleMatch = url.pathname.match(/^\/api\/v1\/memory\/items\/([^/]+)\/lifecycle$/);
+      if (request.method === 'PUT' && lifecycleMatch) {
+        if (!options.memory) return apiError(response, 503, { code: 'memory_unavailable', message: 'Memory lifecycle is unavailable.', retryable: true, action: 'Restart `ft memory open`.' });
+        const body = await readJson(request) as { state?: unknown };
+        const lifecycle = String(body.state) as MemoryLifecycle;
+        if (!['new', 'seen', 'kept', 'dismissed', 'applied', 'archived'].includes(lifecycle)) return apiError(response, 400, { code: 'invalid_lifecycle', message: 'Unknown memory lifecycle state.', retryable: false, action: 'Choose New, Seen, Kept, Dismissed, Applied, or Archived.' });
+        await options.memory.setLifecycle(decodeURIComponent(lifecycleMatch[1]), lifecycle);
+        return json(response, 200, { state: lifecycle });
+      }
       if (request.method === 'GET' && url.pathname === '/api/v1/items') {
         const limit = integerQuery(url.searchParams.get('limit'), 50, 1, 100);
         const offset = integerQuery(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
@@ -176,11 +279,11 @@ export async function startContentServer(options: ContentServerOptions): Promise
       if (request.method === 'GET' && itemId) {
         const item = await options.repository.getItem(itemId);
         if (!item) return apiError(response, 404, { code: 'item_not_found', message: 'The requested content item does not exist.', retryable: false, action: 'Return to the library and select another item.' });
-        const [note, jobs, status, chapterRecord, summary] = await Promise.all([
+        const [note, jobs, status, chapterRecord, summary, capabilities, semantic] = await Promise.all([
           options.repository.getNote(itemId), options.repository.listJobs(itemId), options.repository.itemStatus(itemId, requiredStages(item)),
-          options.repository.getChapters(itemId), options.repository.getSummary(itemId),
+          options.repository.getChapters(itemId), options.repository.getSummary(itemId), options.repository.itemCapabilities(itemId), options.memory?.semanticStatus(),
         ]);
-        return json(response, 200, { ...item, note, jobs, status, chapters: chapterRecord?.chapters ?? [], overview: summary?.overview ?? [], details: summary?.details ?? [] });
+        return json(response, 200, { ...item, note, jobs, status, capabilities: { text: capabilities.text, summary: capabilities.summary, chat: capabilities.chat, embedding: semantic?.ready ?? capabilities.semantic, topics: semantic?.ready ?? capabilities.clustered }, chapters: chapterRecord?.chapters ?? [], overview: summary?.overview ?? [], details: summary?.details ?? [] });
       }
       const transcriptItemId = pathItemId(url.pathname, 'transcript');
       if (request.method === 'GET' && transcriptItemId) {

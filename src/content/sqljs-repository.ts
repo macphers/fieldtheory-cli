@@ -3,14 +3,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Database } from 'sql.js';
 import { openDb, saveDb } from '../db.js';
-import { assertJobTransition, projectItemStatus, type JobState, type ProcessingJobSnapshot, type ProcessingStage } from '../jobs/state-machine.js';
+import { assertJobTransition, projectItemStatus, type JobEnqueueOptions, type JobResourceClass, type JobState, type ProcessingJobSnapshot, type ProcessingStage } from '../jobs/state-machine.js';
 import type {
   ActivityEvent,
   ChapterRecord,
   ContentSearchHit,
+  ContentCapabilities,
   ContentRepository,
   ItemNote,
   ItemDeletionManifest,
+  JobLeaseFence,
+  JobCompletionMutation,
   JobTransitionInput,
   KnowledgeActivityReport,
   RelatedContentHit,
@@ -22,7 +25,11 @@ import type {
 } from './repository.js';
 import { relatedScores } from './related.js';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
+
+function defaultResourceClass(stage: ProcessingStage): JobResourceClass {
+  return stage === 'metadata' || stage === 'transcript' ? 'network' : 'model';
+}
 
 function rows(db: Database, sql: string, params: Array<string | number | null> = []): Record<string, unknown>[] {
   const result = db.exec(sql, params)[0];
@@ -39,6 +46,10 @@ function jobFromRow(row: Record<string, unknown>): ProcessingJobSnapshot {
     id: String(row.id), itemId: String(row.item_id), stage: row.stage as ProcessingStage,
     inputFingerprint: String(row.input_fingerprint), implementationVersion: Number(row.implementation_version),
     state: row.state as JobState, attemptCount: Number(row.attempt_count),
+    priority: Number(row.priority ?? 0),
+    resourceClass: (row.resource_class ?? defaultResourceClass(row.stage as ProcessingStage)) as JobResourceClass,
+    ...(row.depends_on_job_id ? { dependsOnJobId: String(row.depends_on_job_id) } : {}),
+    leaseToken: Number(row.lease_token ?? 0),
     ...(row.next_retry_at ? { nextRetryAt: String(row.next_retry_at) } : {}),
     ...(row.lease_owner ? { leaseOwner: String(row.lease_owner) } : {}),
     ...(row.lease_expires_at ? { leaseExpiresAt: String(row.lease_expires_at) } : {}),
@@ -141,12 +152,20 @@ function initializeSchema(db: Database): void {
   db.run(`CREATE TABLE IF NOT EXISTS processing_jobs (
     id TEXT PRIMARY KEY, item_id TEXT NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
     stage TEXT NOT NULL, input_fingerprint TEXT NOT NULL, implementation_version INTEGER NOT NULL,
-    state TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, next_retry_at TEXT,
+    state TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 0,
+    resource_class TEXT NOT NULL DEFAULT 'network', depends_on_job_id TEXT, lease_token INTEGER NOT NULL DEFAULT 0, next_retry_at TEXT,
     lease_owner TEXT, lease_expires_at TEXT, started_at TEXT, last_error_code TEXT, last_error_detail TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE(item_id, stage, input_fingerprint, implementation_version)
   )`);
-  db.run(`CREATE INDEX IF NOT EXISTS processing_jobs_queue ON processing_jobs(state, next_retry_at, created_at)`);
+  const jobColumns = new Set(rows(db, 'PRAGMA table_info(processing_jobs)').map((row) => String(row.name)));
+  if (!jobColumns.has('priority')) db.run('ALTER TABLE processing_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
+  if (!jobColumns.has('resource_class')) db.run("ALTER TABLE processing_jobs ADD COLUMN resource_class TEXT NOT NULL DEFAULT 'network'");
+  if (!jobColumns.has('depends_on_job_id')) db.run('ALTER TABLE processing_jobs ADD COLUMN depends_on_job_id TEXT');
+  if (!jobColumns.has('lease_token')) db.run('ALTER TABLE processing_jobs ADD COLUMN lease_token INTEGER NOT NULL DEFAULT 0');
+  db.run('DROP INDEX IF EXISTS processing_jobs_queue');
+  db.run(`CREATE INDEX processing_jobs_queue ON processing_jobs(state, resource_class, priority DESC, next_retry_at, created_at)`);
+  db.run(`CREATE INDEX IF NOT EXISTS processing_jobs_dependency ON processing_jobs(depends_on_job_id)`);
   db.run(`CREATE TABLE IF NOT EXISTS processing_attempts (
     id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES processing_jobs(id) ON DELETE CASCADE,
     attempt_number INTEGER NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL,
@@ -170,6 +189,7 @@ export class SqlJsContentRepository implements ContentRepository {
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
   private persistenceError: Error | null = null;
+  private dirty = false;
 
   private constructor(private readonly db: Database, private readonly filePath: string) {}
 
@@ -194,13 +214,14 @@ export class SqlJsContentRepository implements ContentRepository {
   private persist(): void {
     try {
       saveDb(this.db, this.filePath);
+      this.dirty = false;
     } catch (error) {
       this.persistenceError = error instanceof Error ? error : new Error(String(error));
       throw error;
     }
   }
 
-  private transaction<T>(operation: () => T): T {
+  private transaction<T>(operation: () => T, persist = true): T {
     this.db.run('BEGIN IMMEDIATE');
     let value: T;
     try {
@@ -213,18 +234,21 @@ export class SqlJsContentRepository implements ContentRepository {
     // Persistence happens after the in-memory transaction is committed. Keep it
     // outside the rollback block so an I/O failure is reported directly instead
     // of being masked by a second "no transaction is active" error.
-    this.persist();
+    this.dirty = true;
+    if (persist) this.persist();
     return value;
   }
 
-  async upsertItem(item: StoredContentItem): Promise<void> {
-    return this.exclusive(() => this.transaction(() => {
-      this.db.run(`INSERT INTO content_items(id,type,video_id,canonical_url,title,creator,duration_ms,thumbnail_url,media_url,language,source_chapters_json,created_at,updated_at)
+  private upsertItemSync(item: StoredContentItem): void {
+    this.db.run(`INSERT INTO content_items(id,type,video_id,canonical_url,title,creator,duration_ms,thumbnail_url,media_url,language,source_chapters_json,created_at,updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_url=excluded.canonical_url,title=excluded.title,
         creator=excluded.creator,duration_ms=excluded.duration_ms,thumbnail_url=excluded.thumbnail_url,media_url=excluded.media_url,language=excluded.language,source_chapters_json=excluded.source_chapters_json,updated_at=excluded.updated_at`,
       [item.canonicalId, item.type, item.videoId ?? null, item.canonicalUrl, item.title, item.creator, item.durationMs, item.thumbnailUrl ?? null, item.mediaUrl ?? null, item.language ?? null, item.creatorChapters ? JSON.stringify(item.creatorChapters) : null, item.createdAt, item.updatedAt]);
-      for (const ref of item.sourceRefs) this.db.run(`INSERT OR IGNORE INTO source_refs VALUES (?,?,?,?,?)`, [item.canonicalId, ref.bookmarkId, ref.bookmarkUrl, ref.sourceUrl, ref.discoveredAt]);
-    }));
+    for (const ref of item.sourceRefs) this.db.run(`INSERT OR IGNORE INTO source_refs VALUES (?,?,?,?,?)`, [item.canonicalId, ref.bookmarkId, ref.bookmarkUrl, ref.sourceUrl, ref.discoveredAt]);
+  }
+
+  async upsertItem(item: StoredContentItem): Promise<void> {
+    return this.exclusive(() => this.transaction(() => this.upsertItemSync(item)));
   }
 
   async getItem(itemId: string): Promise<StoredContentItem | null> {
@@ -235,20 +259,32 @@ export class SqlJsContentRepository implements ContentRepository {
     return this.exclusive(() => rows(this.db, 'SELECT * FROM content_items ORDER BY updated_at DESC, id LIMIT ? OFFSET ?', [limit, offset]).map((row) => itemFromRow(this.db, row)));
   }
 
-  async saveTranscript(record: TranscriptRecord): Promise<void> {
-    return this.exclusive(() => this.transaction(() => {
-      if (!first(this.db, 'SELECT id FROM content_items WHERE id = ?', [record.itemId])) throw new Error(`Unknown content item: ${record.itemId}.`);
-      this.db.run('DELETE FROM transcript_fts WHERE item_id = ?', [record.itemId]);
-      this.db.run('DELETE FROM transcript_segments WHERE item_id = ?', [record.itemId]);
-      this.db.run(`INSERT OR REPLACE INTO transcripts VALUES (?,?,?,?,?,?,?,?,?,?)`, [
+  private assertLeaseFenceSync(itemId: string, fence: JobLeaseFence): void {
+    const row = first(this.db, 'SELECT item_id,state,lease_owner,lease_token FROM processing_jobs WHERE id=?', [fence.jobId]);
+    if (!row || String(row.item_id) !== itemId || row.state !== 'running' || row.lease_owner !== fence.workerId || Number(row.lease_token) !== fence.token) {
+      throw new Error('Job lease fence rejected a stale artifact write.');
+    }
+  }
+
+  private saveTranscriptSync(record: TranscriptRecord): void {
+    if (!first(this.db, 'SELECT id FROM content_items WHERE id = ?', [record.itemId])) throw new Error(`Unknown content item: ${record.itemId}.`);
+    this.db.run('DELETE FROM transcript_fts WHERE item_id = ?', [record.itemId]);
+    this.db.run('DELETE FROM transcript_segments WHERE item_id = ?', [record.itemId]);
+    this.db.run(`INSERT OR REPLACE INTO transcripts VALUES (?,?,?,?,?,?,?,?,?,?)`, [
         record.itemId, record.artifactHash, record.artifactPath, record.transcript.contentHash, record.transcript.language,
         record.transcript.segmentationVersion, record.transcript.provenance.provider, record.transcript.provenance.source,
         record.transcript.provenance.toolVersion ?? null, record.acquiredAt,
-      ]);
-      for (const segment of record.transcript.segments) {
-        this.db.run('INSERT INTO transcript_segments VALUES (?,?,?,?,?)', [segment.id, record.itemId, segment.startMs, segment.endMs, segment.text]);
-        this.db.run('INSERT INTO transcript_fts(segment_id,item_id,text) VALUES (?,?,?)', [segment.id, record.itemId, segment.text]);
-      }
+    ]);
+    for (const segment of record.transcript.segments) {
+      this.db.run('INSERT INTO transcript_segments VALUES (?,?,?,?,?)', [segment.id, record.itemId, segment.startMs, segment.endMs, segment.text]);
+      this.db.run('INSERT INTO transcript_fts(segment_id,item_id,text) VALUES (?,?,?)', [segment.id, record.itemId, segment.text]);
+    }
+  }
+
+  async saveTranscript(record: TranscriptRecord, fence?: JobLeaseFence): Promise<void> {
+    return this.exclusive(() => this.transaction(() => {
+      if (fence) this.assertLeaseFenceSync(record.itemId, fence);
+      this.saveTranscriptSync(record);
     }));
   }
 
@@ -367,16 +403,21 @@ export class SqlJsContentRepository implements ContentRepository {
     });
   }
 
-  async replaceChapters(record: ChapterRecord): Promise<void> {
+  private replaceChaptersSync(record: ChapterRecord): void {
+    const transcript = first(this.db, 'SELECT content_hash FROM transcripts WHERE item_id=?', [record.itemId]);
+    if (!transcript || transcript.content_hash !== record.transcriptContentHash) throw new Error('Chapters do not match the current transcript.');
+    this.db.run('DELETE FROM chapters WHERE item_id=?', [record.itemId]);
+    const generationJson = JSON.stringify({ transcriptContentHash: record.transcriptContentHash, ...(record.generation ?? {}) });
+    record.chapters.forEach((chapter, index) => {
+      const id = createHash('sha256').update(`${record.artifactHash}:${index}:${chapter.startMs}:${chapter.endMs}`).digest('hex').slice(0, 32);
+      this.db.run('INSERT INTO chapters VALUES (?,?,?,?,?,?,?,?)', [id, record.itemId, chapter.startMs, chapter.endMs, chapter.label, chapter.source, record.artifactHash, generationJson]);
+    });
+  }
+
+  async replaceChapters(record: ChapterRecord, fence?: JobLeaseFence): Promise<void> {
     return this.exclusive(() => this.transaction(() => {
-      const transcript = first(this.db, 'SELECT content_hash FROM transcripts WHERE item_id=?', [record.itemId]);
-      if (!transcript || transcript.content_hash !== record.transcriptContentHash) throw new Error('Chapters do not match the current transcript.');
-      this.db.run('DELETE FROM chapters WHERE item_id=?', [record.itemId]);
-      const generationJson = JSON.stringify({ transcriptContentHash: record.transcriptContentHash, ...(record.generation ?? {}) });
-      record.chapters.forEach((chapter, index) => {
-        const id = createHash('sha256').update(`${record.artifactHash}:${index}:${chapter.startMs}:${chapter.endMs}`).digest('hex').slice(0, 32);
-        this.db.run('INSERT INTO chapters VALUES (?,?,?,?,?,?,?,?)', [id, record.itemId, chapter.startMs, chapter.endMs, chapter.label, chapter.source, record.artifactHash, generationJson]);
-      });
+      if (fence) this.assertLeaseFenceSync(record.itemId, fence);
+      this.replaceChaptersSync(record);
     }));
   }
 
@@ -397,13 +438,18 @@ export class SqlJsContentRepository implements ContentRepository {
     });
   }
 
-  async saveSummary(record: SummaryRecord): Promise<void> {
-    return this.exclusive(() => this.transaction(() => {
-      const transcript = first(this.db, 'SELECT content_hash FROM transcripts WHERE item_id=?', [record.itemId]);
-      if (!transcript || transcript.content_hash !== record.transcriptContentHash) throw new Error('Summary does not match the current transcript.');
-      this.db.run('UPDATE summaries SET promoted_at=NULL WHERE item_id=?', [record.itemId]);
-      this.db.run(`INSERT OR REPLACE INTO summaries(id,item_id,transcript_content_hash,chapters_artifact_hash,overview_json,details_json,provider,model,prompt_version,artifact_hash,validation_state,created_at,promoted_at)
+  private saveSummarySync(record: SummaryRecord): void {
+    const transcript = first(this.db, 'SELECT content_hash FROM transcripts WHERE item_id=?', [record.itemId]);
+    if (!transcript || transcript.content_hash !== record.transcriptContentHash) throw new Error('Summary does not match the current transcript.');
+    this.db.run('UPDATE summaries SET promoted_at=NULL WHERE item_id=?', [record.itemId]);
+    this.db.run(`INSERT OR REPLACE INTO summaries(id,item_id,transcript_content_hash,chapters_artifact_hash,overview_json,details_json,provider,model,prompt_version,artifact_hash,validation_state,created_at,promoted_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, [record.artifactHash, record.itemId, record.transcriptContentHash, record.chaptersArtifactHash ?? null, JSON.stringify(record.overview), JSON.stringify(record.details), record.provider, record.model ?? null, record.promptVersion, record.artifactHash, record.validationState, record.createdAt, record.promotedAt]);
+  }
+
+  async saveSummary(record: SummaryRecord, fence?: JobLeaseFence): Promise<void> {
+    return this.exclusive(() => this.transaction(() => {
+      if (fence) this.assertLeaseFenceSync(record.itemId, fence);
+      this.saveSummarySync(record);
     }));
   }
 
@@ -464,40 +510,63 @@ export class SqlJsContentRepository implements ContentRepository {
     return this.exclusive(() => { const row = first(this.db, 'SELECT * FROM notes WHERE item_id = ?', [itemId]); return row ? { itemId, markdown: String(row.markdown), version: Number(row.version), createdAt: String(row.created_at), updatedAt: String(row.updated_at) } : null; });
   }
 
-  async enqueueJob(itemId: string, stage: ProcessingStage, inputFingerprint: string, implementationVersion: number, now: string): Promise<ProcessingJobSnapshot> {
+  private enqueueJobSync(itemId: string, stage: ProcessingStage, inputFingerprint: string, implementationVersion: number, now: string, options: JobEnqueueOptions = {}): ProcessingJobSnapshot {
+    if (!first(this.db, 'SELECT id FROM content_items WHERE id=?', [itemId])) throw new Error(`Unknown content item: ${itemId}.`);
+    if (options.dependsOnJobId) {
+      const parent = first(this.db, 'SELECT item_id FROM processing_jobs WHERE id=?', [options.dependsOnJobId]);
+      if (!parent || String(parent.item_id) !== itemId) throw new Error('A job dependency must exist on the same content item.');
+    }
+    const id = createHash('sha256').update(`${itemId}:${stage}:${inputFingerprint}:${implementationVersion}`).digest('hex').slice(0, 32);
+    this.db.run(`INSERT OR IGNORE INTO processing_jobs(
+      id,item_id,stage,input_fingerprint,implementation_version,state,attempt_count,priority,resource_class,depends_on_job_id,lease_token,created_at,updated_at
+    ) VALUES (?,?,?,?,?,'queued',0,?,?,?,?,?,?)`, [
+      id, itemId, stage, inputFingerprint, implementationVersion, options.priority ?? 0,
+      options.resourceClass ?? defaultResourceClass(stage), options.dependsOnJobId ?? null, 0, now, now,
+    ]);
+    return jobFromRow(first(this.db, 'SELECT * FROM processing_jobs WHERE id = ?', [id])!);
+  }
+
+  async enqueueJob(itemId: string, stage: ProcessingStage, inputFingerprint: string, implementationVersion: number, now: string, options: JobEnqueueOptions = {}): Promise<ProcessingJobSnapshot> {
     return this.exclusive(() => this.transaction(() => {
-      const id = createHash('sha256').update(`${itemId}:${stage}:${inputFingerprint}:${implementationVersion}`).digest('hex').slice(0, 32);
-      this.db.run(`INSERT OR IGNORE INTO processing_jobs(id,item_id,stage,input_fingerprint,implementation_version,state,attempt_count,created_at,updated_at) VALUES (?,?,?,?,?,'queued',0,?,?)`,
-        [id, itemId, stage, inputFingerprint, implementationVersion, now, now]);
-      return jobFromRow(first(this.db, 'SELECT * FROM processing_jobs WHERE id = ?', [id])!);
+      return this.enqueueJobSync(itemId, stage, inputFingerprint, implementationVersion, now, options);
     }));
   }
 
-  async leaseNextJob(workerId: string, now: string, leaseMs = 60_000): Promise<ProcessingJobSnapshot | null> {
+  async leaseNextJob(workerId: string, now: string, leaseMs = 60_000, resourceClass?: JobResourceClass): Promise<ProcessingJobSnapshot | null> {
     return this.exclusive(() => this.transaction(() => {
       this.recoverExpiredLeasesSync(now);
       this.db.run(`UPDATE processing_jobs SET state='queued',updated_at=? WHERE state='retry_wait' AND next_retry_at<=?`, [now, now]);
-      const row = first(this.db, `SELECT * FROM processing_jobs WHERE state='queued' AND (next_retry_at IS NULL OR next_retry_at<=?) ORDER BY created_at,id LIMIT 1`, [now]);
+      const row = first(this.db, `SELECT j.* FROM processing_jobs j
+        LEFT JOIN processing_jobs dependency ON dependency.id=j.depends_on_job_id
+        WHERE j.state='queued' AND (j.next_retry_at IS NULL OR j.next_retry_at<=?)
+          AND (j.depends_on_job_id IS NULL OR dependency.state='succeeded')
+          ${resourceClass ? 'AND j.resource_class=?' : ''}
+        ORDER BY j.priority DESC,j.created_at,j.id LIMIT 1`, resourceClass ? [now, resourceClass] : [now]);
       if (!row) return null;
       const expires = new Date(Date.parse(now) + leaseMs).toISOString();
-      this.db.run(`UPDATE processing_jobs SET state='running',attempt_count=attempt_count+1,lease_owner=?,lease_expires_at=?,started_at=?,updated_at=?,next_retry_at=NULL,last_error_code=NULL,last_error_detail=NULL WHERE id=?`, [workerId, expires, now, now, String(row.id)]);
+      this.db.run(`UPDATE processing_jobs SET state='running',attempt_count=attempt_count+1,lease_token=lease_token+1,lease_owner=?,lease_expires_at=?,started_at=?,updated_at=?,next_retry_at=NULL,last_error_code=NULL,last_error_detail=NULL WHERE id=?`, [workerId, expires, now, now, String(row.id)]);
       return jobFromRow(first(this.db, 'SELECT * FROM processing_jobs WHERE id=?', [String(row.id)])!);
     }));
   }
 
-  async renewJobLease(jobId: string, workerId: string, now: string, leaseMs = 60_000): Promise<ProcessingJobSnapshot> {
+  async renewJobLease(jobId: string, workerId: string, leaseToken: number, now: string, leaseMs = 60_000): Promise<ProcessingJobSnapshot> {
     return this.exclusive(() => this.transaction(() => {
       const job = first(this.db, 'SELECT * FROM processing_jobs WHERE id=?', [jobId]);
-      if (!job || job.state !== 'running' || job.lease_owner !== workerId) throw new Error('Job lease is not owned by this worker.');
+      if (!job || job.state !== 'running' || job.lease_owner !== workerId || Number(job.lease_token) !== leaseToken) throw new Error('Job lease is not owned by this worker.');
       this.db.run('UPDATE processing_jobs SET lease_expires_at=?,updated_at=? WHERE id=?', [new Date(Date.parse(now) + leaseMs).toISOString(), now, jobId]);
       return jobFromRow(first(this.db, 'SELECT * FROM processing_jobs WHERE id=?', [jobId])!);
-    }));
+    }, false));
   }
 
   private transitionJobSync(jobId: string, input: JobTransitionInput): ProcessingJobSnapshot {
     const row = first(this.db, 'SELECT * FROM processing_jobs WHERE id=?', [jobId]);
     if (!row) throw new Error(`Unknown processing job: ${jobId}.`);
     const current = jobFromRow(row);
+    if (current.state === 'running') {
+      if (!input.lease || input.lease.workerId !== current.leaseOwner || input.lease.token !== current.leaseToken) {
+        throw new Error('Job lease fence rejected a stale worker.');
+      }
+    }
     assertJobTransition(current.state, input.state);
     if (input.state === 'retry_wait' && !input.nextRetryAt) throw new Error('retry_wait requires nextRetryAt.');
     if (current.state === 'running' && input.state !== 'running') {
@@ -511,6 +580,23 @@ export class SqlJsContentRepository implements ContentRepository {
 
   async transitionJob(jobId: string, input: JobTransitionInput): Promise<ProcessingJobSnapshot> {
     return this.exclusive(() => this.transaction(() => this.transitionJobSync(jobId, input)));
+  }
+
+  async completeJob(jobId: string, input: JobTransitionInput & { state: 'succeeded'; lease: { workerId: string; token: number } }, children: import('./repository.js').ChildJobInput[] = [], mutation?: JobCompletionMutation): Promise<ProcessingJobSnapshot> {
+    return this.exclusive(() => this.transaction(() => {
+      const running = jobFromRow(first(this.db, 'SELECT * FROM processing_jobs WHERE id=?', [jobId])!);
+      const fence = { jobId, workerId: input.lease.workerId, token: input.lease.token };
+      this.assertLeaseFenceSync(running.itemId, fence);
+      if (mutation) {
+        if (mutation.kind === 'metadata') this.upsertItemSync(mutation.item);
+        if (mutation.kind === 'transcript') { this.upsertItemSync(mutation.item); this.saveTranscriptSync(mutation.transcript); }
+        if (mutation.kind === 'chapters') this.replaceChaptersSync(mutation.chapters);
+        if (mutation.kind === 'summary') this.saveSummarySync(mutation.summary);
+      }
+      const completed = this.transitionJobSync(jobId, input);
+      for (const child of children) this.enqueueJobSync(completed.itemId, child.stage, child.inputFingerprint, child.implementationVersion, input.now, child.options);
+      return completed;
+    }));
   }
 
   async retryJob(jobId: string, now: string): Promise<ProcessingJobSnapshot> {
@@ -543,6 +629,18 @@ export class SqlJsContentRepository implements ContentRepository {
     return projectItemStatus(await this.listJobs(itemId), requiredStages);
   }
 
+  async itemCapabilities(itemId: string): Promise<ContentCapabilities> {
+    return this.exclusive(() => {
+      const item = first(this.db, 'SELECT id FROM content_items WHERE id=?', [itemId]);
+      if (!item) return { metadata: false, text: false, exactSearch: false, chapters: false, summary: false, chat: false, semantic: false, clustered: false };
+      const transcript = first(this.db, 'SELECT content_hash FROM transcripts WHERE item_id=?', [itemId]);
+      const text = Boolean(transcript && first(this.db, 'SELECT 1 AS value FROM transcript_segments WHERE item_id=? LIMIT 1', [itemId]));
+      const chapters = Boolean(transcript && first(this.db, `SELECT 1 AS value FROM chapters WHERE item_id=? AND json_extract(generation_json,'$.transcriptContentHash')=? LIMIT 1`, [itemId, String(transcript?.content_hash)]));
+      const summary = Boolean(transcript && first(this.db, 'SELECT 1 AS value FROM summaries WHERE item_id=? AND transcript_content_hash=? AND promoted_at IS NOT NULL LIMIT 1', [itemId, String(transcript?.content_hash)]));
+      return { metadata: true, text, exactSearch: text, chapters, summary, chat: text, semantic: false, clustered: false };
+    });
+  }
+
   async setLongTranscriptionOverride(itemId: string, enabled: boolean): Promise<void> {
     return this.exclusive(() => this.transaction(() => {
       if (!first(this.db, 'SELECT id FROM content_items WHERE id=?', [itemId])) throw new Error(`Unknown content item: ${itemId}.`);
@@ -559,7 +657,7 @@ export class SqlJsContentRepository implements ContentRepository {
     const expired = rows(this.db, `SELECT * FROM processing_jobs WHERE state='running' AND lease_expires_at<?`, [now]);
     for (const row of expired) {
       const job = jobFromRow(row);
-      this.transitionJobSync(job.id, { state: 'interrupted', now, errorCode: 'lease_expired', errorDetail: 'The worker lease expired before completion.' });
+      this.transitionJobSync(job.id, { state: 'interrupted', now, errorCode: 'lease_expired', errorDetail: 'The worker lease expired before completion.', lease: { workerId: job.leaseOwner!, token: job.leaseToken } });
       this.db.run(`UPDATE processing_jobs SET state='queued',updated_at=? WHERE id=?`, [now, job.id]);
     }
     return expired.length;
@@ -666,7 +764,7 @@ export class SqlJsContentRepository implements ContentRepository {
   }
 
   async checkpoint(): Promise<void> {
-    return this.exclusive(() => { this.persist(); });
+    return this.exclusive(() => { if (this.dirty || !fs.existsSync(this.filePath)) this.persist(); });
   }
 
   async close(): Promise<void> {

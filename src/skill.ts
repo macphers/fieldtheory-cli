@@ -15,8 +15,9 @@ const BODY = `
 
 Use the Field Theory CLI to inspect and work with the user's local context.
 
-Field Theory has four main local surfaces:
+Field Theory has one unified memory search across five local surfaces:
 
+- processed sources: videos, podcasts, articles, transcripts, summaries, and cited passages
 - bookmarks: raw synced X/Twitter bookmark data
 - library: readable markdown knowledge and authored notes
 - commands: portable markdown actions in \`~/.fieldtheory/library/Commands\`
@@ -39,8 +40,8 @@ Field Theory has four main local surfaces:
 2. When the user asks what Field Theory document they are looking at, run \`ft current --json\`; the JSON includes the document body, source path, editability, hash, content mode, and line-number mapping when available
 3. Check repo workflow state when branch/worktree/PR shape matters: \`ft state --json\`
 4. When the user says "that file" or "the recent file", inspect current repo recency with \`ft recent --json\`
-5. Search durable notes first when prior project knowledge matters: \`ft library search <query> --json\`
-6. Search bookmarks when reading history or saved X/Twitter posts matter: \`ft search <query> --json\`
+5. Search unified memory first: \`ft memory search <query> --json\`. This spans processed sources and passages, X bookmarks, and Library Markdown.
+6. Use \`ft library search <query> --json\` or \`ft search <query> --json\` only when the user explicitly needs one underlying store.
 7. Inspect exact files or bookmarks with \`ft library show <path> --json\`, \`ft show <id> --json\`, or \`ft commands show <name> --json\`
 8. Create or update durable Library notes and portable commands only when the user asks for a saved artifact
 9. Open useful Library pages in the Mac app with \`ft library open <path>\`
@@ -115,6 +116,13 @@ ft current update --stdin --expected-sha256 <sha>   # Replace the actual current
 ft state --json                # Repo workflow state: root, workers, PRs, cleanup, next step
 ft recent --json               # Current repo last-modified file and recent files for agent references
 
+ft memory search <query> --json # Unified sources, passages, bookmarks, and Library recall
+ft memory ask <question> --json # Evidence-grounded corpus question
+ft memory topics --json         # Recurring lexical or local-semantic topics
+ft memory report --json         # Private useful-memory and sync status
+ft memory add <url>              # Capture a public source when the user asks
+ft memory doctor --json          # Independent capability and recovery report
+
 ft search <query>              # Full-text BM25 search ("exact phrase", AND, OR, NOT)
 ft list --category <cat>       # tool, technique, research, opinion, launch, security, commerce
 ft list --domain <dom>         # ai, web-dev, startups, finance, design, devops, marketing, etc.
@@ -149,7 +157,7 @@ Combine filters: \`ft list --category tool --domain ai --limit 10\`
 ## Guidelines
 
 - Prefer JSON output when you need to inspect or cite exact fields
-- Start with Library pages for durable project knowledge, then search bookmarks for source material
+- Start with unified \`ft memory search\`; narrow to Library or bookmarks only when useful
 - Don't dump raw output; summarize and connect findings to the user's current work
 - Cross-reference multiple queries to build a complete picture
 - Look for recurring authors, topic clusters, and connections between bookmarks

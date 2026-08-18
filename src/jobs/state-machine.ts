@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export type ProcessingStage = 'metadata' | 'transcript' | 'chapters' | 'summary';
+export type JobResourceClass = 'network' | 'model' | 'cpu';
 export type JobState = 'queued' | 'running' | 'retry_wait' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'interrupted';
 export type ItemProcessingStatus = 'discovered' | 'processing' | 'ready' | 'failed' | 'blocked' | 'cancelled';
 
@@ -12,6 +13,10 @@ export interface ProcessingJobSnapshot {
   implementationVersion: number;
   state: JobState;
   attemptCount: number;
+  priority: number;
+  resourceClass: JobResourceClass;
+  dependsOnJobId?: string;
+  leaseToken: number;
   nextRetryAt?: string;
   leaseOwner?: string;
   leaseExpiresAt?: string;
@@ -20,6 +25,12 @@ export interface ProcessingJobSnapshot {
   lastErrorDetail?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface JobEnqueueOptions {
+  priority?: number;
+  resourceClass?: JobResourceClass;
+  dependsOnJobId?: string;
 }
 
 const LEGAL_TRANSITIONS: Record<JobState, readonly JobState[]> = {

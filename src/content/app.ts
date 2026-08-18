@@ -19,6 +19,7 @@ import { YtDlpTranscriptProvider } from './transcripts/yt-dlp.js';
 import { PodcastTranscriptPipeline } from './transcripts/podcast.js';
 import { startContentServer, type RunningContentServer } from '../server/http.js';
 import { cleanupOrphanedTempFiles } from './temp-cleanup.js';
+import { MemoryService } from '../memory/service.js';
 
 export interface ContentAppOptions {
   engine?: string;
@@ -30,6 +31,7 @@ export interface ContentAppOptions {
   syncBookmarks?: typeof syncBookmarksGraphQL;
   openBrowser?: (url: string) => void | Promise<void>;
   shutdownTimeoutMs?: number;
+  syncIntervalMs?: number;
 }
 
 export interface RunningContentApp {
@@ -95,6 +97,7 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
   const repository = await SqlJsContentRepository.open(contentDatabasePath());
   let server: RunningContentServer | undefined;
   let timer: NodeJS.Timeout | undefined;
+  let syncTimer: NodeJS.Timeout | undefined;
   let workerPromise: Promise<void> = Promise.resolve();
   let syncPromise: Promise<void> = Promise.resolve();
   const syncController = new AbortController();
@@ -127,6 +130,8 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
       ffmpegBinary: env.FT_FFMPEG_PATH ?? 'ffmpeg',
     });
     const orchestrator = new ContentOrchestrator({ repository, metadataProvider: captionProvider, transcriptPipeline, podcastPipeline, model });
+    const memory = new MemoryService(repository, { orchestrator, ...(model ? { model } : {}) });
+    let syncPaused = await memory.isPaused('sync');
     const worker = new DurableJobWorker({ repository, workerId: `app-${process.pid}-${randomUUID()}`, handlers: orchestrator.handlers() });
 
     const discoverCached = async (): Promise<void> => {
@@ -139,6 +144,8 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
       }
       const result = await orchestrator.discover(bookmarks);
       onStatus(`Knowledge library: ${result.discovered} saved source${result.discovered === 1 ? '' : 's'} discovered.`);
+      const reconciled = await orchestrator.reconcile();
+      if (reconciled.chapters + reconciled.summaries > 0) onStatus(`Memory repair queued: ${reconciled.chapters} chapter set${reconciled.chapters === 1 ? '' : 's'} and ${reconciled.summaries} digest${reconciled.summaries === 1 ? '' : 's'}.`);
     };
     await discoverCached();
 
@@ -160,6 +167,7 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
 
     server = await startContentServer({
       repository,
+      memory,
       ...(model ? { chat: new GroundedChatService(repository, model) } : {}),
       cancelJob: async (jobId) => {
         if (worker.currentJob()?.id !== jobId) throw new Error('The job is no longer running on this worker.');
@@ -167,21 +175,40 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
       },
     });
 
-    if (options.sync !== false) {
+    const runSync = async (): Promise<void> => {
+      if (closing || syncPaused) return;
       const sync = options.syncBookmarks ?? syncBookmarksGraphQL;
-      syncPromise = sync({
+      try {
+        const pendingSync = sync({
         incremental: true,
         maxMinutes: 5,
         signal: syncController.signal,
         onProgress: (progress) => onStatus(progress.stopReason ?? `Bookmark sync: page ${progress.page}, ${progress.newAdded} added.`),
-      })
-        .then(async (result) => {
-          if (closing) return;
-          onStatus(`Bookmark sync complete: ${result.added} added.`);
-          await discoverCached();
-          poll();
-        })
-        .catch((error) => { onStatus(`Bookmark sync unavailable; using local cache (${error instanceof Error ? error.message : String(error)}).`); });
+        });
+        void memory.recordSync({ success: false, error: 'sync_in_progress' });
+        const result = await pendingSync;
+        if (closing) return;
+        onStatus(`Bookmark sync complete: ${result.added} added.`);
+        await discoverCached();
+        await memory.recordSync({ success: true });
+        syncPaused = await memory.isPaused('sync');
+        poll();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await memory.recordSync({ success: false, error: message });
+        syncPaused = await memory.isPaused('sync');
+        onStatus(`Bookmark sync unavailable; using local cache (${message}).`);
+      }
+    };
+    if (options.sync !== false) {
+      syncPromise = runSync();
+      syncTimer = setInterval(() => {
+        syncPromise = syncPromise.then(async () => {
+          syncPaused = await memory.isPaused('sync');
+          await runSync();
+        });
+      }, Math.max(60_000, options.syncIntervalMs ?? 15 * 60_000));
+      syncTimer.unref();
     }
 
     if (options.open !== false) {
@@ -200,6 +227,7 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
         if (closing) return;
         closing = true;
         if (timer) clearInterval(timer);
+        if (syncTimer) clearInterval(syncTimer);
         syncController.abort(new Error('Field Theory app is shutting down.'));
         worker.stop();
         const deadline = Date.now() + (options.shutdownTimeoutMs ?? 5_000);
@@ -210,6 +238,7 @@ export async function startContentApp(options: ContentAppOptions = {}): Promise<
   } catch (error) {
     closing = true;
     if (timer) clearInterval(timer);
+    if (syncTimer) clearInterval(syncTimer);
     syncController.abort(new Error('Field Theory app failed to start.'));
     const deadline = Date.now() + (options.shutdownTimeoutMs ?? 5_000);
     await settleAppWork([workerPromise, syncPromise], deadline, () => onStatus('Startup cleanup deadline reached; closing local resources.'));
