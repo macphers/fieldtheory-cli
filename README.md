@@ -42,33 +42,43 @@ ft stats
 
 On first run, `ft sync` extracts your X session from your browser and downloads your bookmarks into `~/.fieldtheory/bookmarks/`.
 
-### Turn saved videos, podcasts, and articles into knowledge pages
+### Turn saved media into a private second brain
 
 ```bash
-# 1. Install the video metadata/caption tool
+# 1. Install the video metadata/caption tool (articles work without it)
 brew install yt-dlp
 
-# 2. Backfill full X Article and ordinary linked-article text
-ft sync --gaps
+# 2. Open existing memory immediately; X sync continues while the app is open
+ft memory open
 
-# 3. Sync new X bookmarks, process saved sources, and open the local library
-ft app
+# 3. Capture anything without waiting for X
+ft memory add "https://example.com/useful-article"
 
-# 4. If Field Theory reports a missing prerequisite, inspect the exact capability
-ft app doctor
+# 4. Inspect each independent capability and its exact recovery action
+ft memory doctor
 ```
 
-The knowledge library deduplicates YouTube, supported podcast episodes, and linked articles across bookmarks. It imports X Article text from the bookmark cache and ordinary linked-article enrichment from the local bookmark search index. Videos prefer creator or automatic captions. Feed-backed podcast pages use publisher VTT/SRT transcripts and Podcasting 2.0 chapters when available. Video and podcast sources fall back to bounded local `whisper.cpp` transcription when needed. Every source type receives navigation, citation-grounded summaries, library search, cited item chat, related-page discovery, and local notes. The page appears progressively while background work continues.
+Field Theory now closes the loop from capture to recall. It deduplicates YouTube videos, supported podcast episodes, and public articles; prepares searchable text, chapters, cited summaries, corpus answers, topics, and explainable connections; and searches those artifacts alongside X bookmarks and Library Markdown. The app provides five calm surfaces: **Today** (at most three explainable memories), **Library**, **Topics**, **Connections**, and **Ask**. Text and exact search remain useful while optional synthesis or semantic work is unavailable.
 
-`ft app doctor` reports three separate capabilities: captioned videos, local transcription fallback, and summaries/chat. Missing optional tools do not prevent the caption-first path. Captioned videos require only `yt-dlp` after your X bookmarks have been synced. An authenticated Claude Code or Codex CLI enables synthesis. Local fallback additionally requires `ffmpeg`, `whisper.cpp`, and an explicitly installed model:
+`ft memory open` keeps X bookmarks fresh on a durable 15-minute single-flight schedule while the app runs. `ft memory sync status|pause|resume` makes that state visible and controllable. X is only one capture adapter: `ft memory add <url>` safely resolves public URLs, pins validated DNS addresses, revalidates redirects, limits response size/time, and rejects private or reserved network targets.
+
+`ft memory doctor` reports independent capabilities instead of declaring the whole product broken. Missing optional tools do not prevent existing-memory, article, transcript, or exact-search paths. Captioned videos require `yt-dlp`; an authenticated Claude Code or Codex CLI enables synthesis; local audio fallback requires `ffmpeg`, `whisper.cpp`, and an explicitly installed model:
 
 ```bash
 brew install yt-dlp ffmpeg whisper-cpp
 export FT_WHISPER_MODEL=/absolute/path/to/ggml-model.bin
-ft app doctor
+ft memory doctor
 ```
 
-Field Theory never downloads a Whisper model silently. Use `ft app --no-sync` to process the existing bookmark cache or `ft app --no-open` to print the one-time authenticated local URL. `SIGINT`/`SIGTERM` checkpoints work and safely resume interrupted jobs on the next launch.
+Field Theory never downloads a Whisper or embedding model silently. Semantic recall is an explicit local install:
+
+```bash
+ft memory embeddings install
+ft memory embeddings rebuild
+ft memory embeddings status
+```
+
+This installs `Xenova/all-MiniLM-L6-v2` for 384-dimensional, mean-pooled, normalized local CPU embeddings. Vector generations are built separately and promoted atomically; exact search remains available during installation, rebuild, cancellation, or removal. Use `ft memory open --no-sync` to process the existing cache or `--no-open` to print the one-time authenticated URL. `ft app` remains a compatibility command.
 
 For the private quality and habit trial, generate a claim-by-claim packet and check progress locally:
 
@@ -166,6 +176,22 @@ The review packet includes every overview/detail claim, quoted transcript eviden
 | `ft app doctor` | Check X cache access, media tools, model setup, disk, temp cleanup, and loopback security |
 | `ft app report` | Summarize private local opens, citation clicks, notes, questions, and revisited pages |
 | `ft app review [--output <path>]` | Create a private claim-review packet with exact cited transcript excerpts |
+
+### Second-brain memory
+
+| Command | Description |
+|---------|-------------|
+| `ft memory open` | Open Today, Library, Topics, Connections, and corpus Ask; keep X capture current in the background |
+| `ft memory add <url>` | Immediately capture a public video, podcast episode, or article URL |
+| `ft memory search <query>` | Search processed sources, passages, summaries, X bookmarks, and Library Markdown |
+| `ft memory ask <question>` | Retrieve evidence across the corpus and synthesize when a model is configured |
+| `ft memory topics` | Show lexical topics or stable local-embedding clusters |
+| `ft memory sync status\|pause\|resume\|now` | Inspect or control continuous capture |
+| `ft memory backfill status\|pause\|resume` | Keep historical enrichment behind recent/manual work |
+| `ft memory embeddings install\|status\|rebuild\|cancel\|uninstall` | Manage the explicit local semantic model and immutable vector generation |
+| `ft memory doctor` | Report independent capabilities with copy-paste recovery actions |
+| `ft memory report` | Report private local usage, source counts, and sync freshness |
+| `ft memory verify` | Check store readability, Today projection, and processing failures without modifying sources |
 
 `ft library open` targets the packaged Field Theory app by bundle id (`com.fieldtheory.app`) instead of trusting the system-wide `fieldtheory://` handler. That avoids accidentally opening a generic Electron development app when another checkout registered the same URL scheme.
 

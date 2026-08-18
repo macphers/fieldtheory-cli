@@ -43,6 +43,9 @@ const podcastItem = {
   chapters: readyItem.chapters, overview: readyItem.overview, details: readyItem.details,
 };
 const items = [readyItem, articleItem, podcastItem, processingItem, blockedItem];
+const todayMemories = [{ id: 'memory-ready', kind: 'newly_ready', label: 'Newly ready', title: readyItem.title, whyNow: 'This recent save is ready to skim.', provenance: 'generated', itemId: readyItem.canonicalId, evidence: [{ sourceId: readyItem.canonicalId, sourceTitle: readyItem.title, preview: readyItem.overview[0].text, startMs: 0 }] }];
+const topics = [{ id: 'topic-agency', label: 'Agency and useful systems', description: 'How tools preserve human judgment.', confidence: .87, itemCount: 3, recentChange: 'New examples connect infrastructure to agency.' }];
+const connections = [{ id: 'connection-agency', fromId: readyItem.canonicalId, fromTitle: readyItem.title, toId: articleItem.canonicalId, toTitle: articleItem.title, relation: 'extends', explanation: 'Both sources connect practical mechanisms to human agency.', confidence: .81, provenance: 'generated', evidence: [{ sourceId: readyItem.canonicalId, sourceTitle: readyItem.title, preview: transcript[1].text }] }];
 
 async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -54,6 +57,13 @@ async function mockApi(page: Page) {
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === '/api/v1/memory/today') return json(route, { data: todayMemories });
+    if (url.pathname === '/api/v1/memory/topics') return json(route, { data: topics });
+    if (url.pathname === '/api/v1/memory/connections') return json(route, { data: connections });
+    if (url.pathname === '/api/v1/memory/sync/status') return json(route, { state: 'idle', lastSuccessAt: new Date().toISOString() });
+    if (url.pathname === '/api/v1/memory/captures' && request.method() === 'POST') return json(route, { state: 'recognized', message: 'Source recognized and queued.', itemId: readyItem.canonicalId, originalUrl: 'https://example.com/source' });
+    if (url.pathname === '/api/v1/memory/corpus/ask' && request.method() === 'POST') return json(route, { answer: 'The library connects mechanisms to agency.', refused: false, partial: false, evidence: [{ sourceId: readyItem.canonicalId, sourceTitle: readyItem.title, preview: transcript[1].text, location: '1:00', reason: 'Directly discusses the mechanism.' }] });
+    if (url.pathname.match(/^\/api\/v1\/memory\/[^/]+\/feedback$/)) return json(route, { recorded: true });
     if (url.pathname === '/api/v1/items') return json(route, { data: items, pagination: { count: items.length } });
     if (url.pathname === '/api/v1/search') return json(route, { data: [{ item: readyItem, matchType: 'transcript', excerpt: transcript[1].text, rank: -1, segmentId: transcript[1].id, startMs: transcript[1].startMs, endMs: transcript[1].endMs }], query: url.searchParams.get('q') });
     if (url.pathname.endsWith('/related')) return json(route, { data: [{ item: processingItem, score: 0.42, sharedTerms: ['mechanism', 'concrete example'] }], method: 'local-tfidf-v1' });
@@ -76,7 +86,7 @@ async function mockApi(page: Page) {
 async function loadLibrary(page: Page, width: number, height: number) {
   await page.setViewportSize({ width, height });
   await mockApi(page);
-  await page.goto('/');
+  await page.goto('/#/library');
   await expect(page.getByRole('heading', { name: 'Saved understanding' })).toBeVisible();
 }
 
@@ -160,7 +170,7 @@ test('09 grounded chat renders a cited answer', async ({ page }) => {
 });
 
 test('10 processing state keeps the page readable and cancellable', async ({ page }) => {
-  await loadLibrary(page, 1280, 900); await openItem(page, processingItem.title); await expect(page.getByRole('status')).toContainText('Preparing summary'); await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible(); await expect(page.getByLabel('Ask about this video')).toBeDisabled();
+  await loadLibrary(page, 1280, 900); await openItem(page, processingItem.title); await expect(page.getByRole('status')).toContainText('Preparing summary'); await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible(); await expect(page.getByLabel('Ask about this video')).toBeEnabled(); await expect(page.getByText('Text is ready.')).toBeVisible();
 });
 
 test('11 blocked state is actionable and responsive on mobile', async ({ page }) => {
@@ -231,5 +241,46 @@ test('17 feed-backed podcasts render responsive audio and transcript controls', 
   await expect(page.getByRole('tab', { name: 'Chapters' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Transcript' })).toBeVisible();
   await expect(page.getByLabel('Ask about this podcast')).toBeEnabled();
+  await expectMobileTargets(page); await expectNoHorizontalOverflow(page);
+});
+
+test('18 Today is bounded, explainable, and opens source evidence', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 }); await mockApi(page); await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'A few useful memories' })).toBeVisible();
+  await expect(page.getByText('Why now:')).toBeVisible();
+  await expect(page.locator('.memory-card')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Open evidence' }).click();
+  await expect(page.getByRole('heading', { name: readyItem.title })).toBeVisible();
+});
+
+test('19 mobile navigation reaches Topics without the desktop rail', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 }); await mockApi(page); await page.goto('/');
+  await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: /Topics/ }).click();
+  await expect(page.getByRole('heading', { name: 'Themes in your memory' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: topics[0].label })).toBeVisible();
+  await expectNoHorizontalOverflow(page); await expectMobileTargets(page);
+});
+
+test('20 Connections explains evidence and accepts usefulness feedback', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 }); await mockApi(page); await page.goto('/#/connections');
+  await expect(page.getByRole('heading', { name: 'Ideas in conversation' })).toBeVisible();
+  await expect(page.getByText(connections[0].explanation)).toBeVisible();
+  await page.getByRole('button', { name: 'useful' }).click();
+});
+
+test('21 corpus Ask shows a source-and-reason evidence contract', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 }); await mockApi(page); await page.goto('/#/ask');
+  await page.getByLabel('Question for your memory').fill('How do these sources connect mechanism and agency?');
+  await page.getByRole('button', { name: 'Ask', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'The library connects mechanisms to agency.' })).toBeVisible();
+  await expect(page.getByText('Why retrieved: Directly discusses the mechanism.')).toBeVisible();
+});
+
+test('22 Add URL returns a visible capture receipt on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await mockApi(page); await page.goto('/');
+  await page.getByRole('button', { name: /Add/ }).click();
+  await page.getByLabel('Video, podcast, or article URL').fill('https://example.com/source');
+  await page.getByRole('button', { name: 'Add URL', exact: true }).click();
+  await expect(page.locator('.capture-receipt')).toContainText('Source recognized and queued.');
   await expectMobileTargets(page); await expectNoHorizontalOverflow(page);
 });

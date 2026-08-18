@@ -17,8 +17,8 @@ async function setup(chat?: Parameters<typeof startContentServer>[0]['chat']) {
   await repository.upsertItem(item);
   await repository.saveTranscript({ itemId: item.canonicalId, artifactHash: artifact.transcript.contentHash, artifactPath: '/artifact.json', transcript: artifact.transcript, acquiredAt: '2026-08-12T20:00:00.000Z' });
   const job = await repository.enqueueJob(item.canonicalId, 'summary', 'summary-input', 1, '2026-08-12T20:00:00.000Z');
-  await repository.leaseNextJob('worker', '2026-08-12T20:00:00.000Z');
-  await repository.transitionJob(job.id, { state: 'failed', now: '2026-08-12T20:00:01.000Z', errorCode: 'provider_unavailable' });
+  const leased = await repository.leaseNextJob('worker', '2026-08-12T20:00:00.000Z');
+  await repository.transitionJob(job.id, { state: 'failed', now: '2026-08-12T20:00:01.000Z', errorCode: 'provider_unavailable', lease: { workerId: 'worker', token: leased!.leaseToken } });
   const server = await startContentServer({ repository, chat, now: () => Date.parse('2026-08-12T20:00:02.000Z') });
   return { repository, server, item, job };
 }
@@ -121,8 +121,8 @@ test('processing controls persist long-transcription consent and cancel queued w
   const { repository, server, item } = await setup();
   try {
     const job = await repository.enqueueJob(item.canonicalId, 'transcript', 'transcript-input', 1, '2026-08-12T20:00:02.000Z');
-    await repository.leaseNextJob('worker', '2026-08-12T20:00:02.000Z');
-    await repository.transitionJob(job.id, { state: 'blocked', now: '2026-08-12T20:00:02.000Z', errorCode: 'captions_unavailable' });
+    const leased = await repository.leaseNextJob('worker', '2026-08-12T20:00:02.000Z');
+    await repository.transitionJob(job.id, { state: 'blocked', now: '2026-08-12T20:00:02.000Z', errorCode: 'captions_unavailable', lease: { workerId: 'worker', token: leased!.leaseToken } });
     const { cookie, csrf } = await authenticate(server);
     const headers = { cookie, origin: server.origin, 'x-fieldtheory-csrf': csrf, 'content-type': 'application/json' };
     const override = await fetch(`${server.origin}/api/v1/items/${encodeURIComponent(item.canonicalId)}/transcription-override`, { method: 'PUT', headers, body: JSON.stringify({ allowLong: true, retryJobId: job.id }) });

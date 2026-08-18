@@ -42,6 +42,7 @@ import { SqlJsContentRepository } from './content/sqljs-repository.js';
 import { PromptCancelledError, promptText } from './prompt.js';
 import { skillWithFrontmatter, installSkill, uninstallSkill } from './skill.js';
 import { registerCompanionCommands } from './companion-cli.js';
+import { registerMemoryCommands } from './memory/cli.js';
 import { getPathReport } from './field-status.js';
 import { formatAgentContext, getAgentContext } from './agent-context.js';
 import { currentDocumentJson, formatCurrentDocumentSummary, isEditableCurrentSourcePath, readCurrentDocumentContext, readCurrentDocumentSummary } from './current.js';
@@ -868,6 +869,8 @@ export function buildCli() {
       console.log(`  Summaries and chat: ${capabilities.synthesis ? 'ready' : 'optional provider missing'}`);
       if (!capabilities.usable) process.exitCode = 1;
     }));
+
+  registerMemoryCommands(program);
 
   appCommand
     .command('report')

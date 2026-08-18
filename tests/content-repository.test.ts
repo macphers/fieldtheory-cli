@@ -77,6 +77,36 @@ test('schema v3 preserves YouTube rows and accepts articles and podcasts without
   await repo.close();
 });
 
+test('schema v4 migrates queued jobs with safe scheduling and fencing defaults', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'fieldtheory-job-migration-'));
+  const dbPath = path.join(dir, 'content.sqlite');
+  const legacy = await openDb(dbPath);
+  legacy.run('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  legacy.run(`CREATE TABLE content_items (
+    id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK(type IN ('youtube','article','podcast')), video_id TEXT UNIQUE,
+    canonical_url TEXT NOT NULL, title TEXT NOT NULL, creator TEXT NOT NULL, duration_ms INTEGER NOT NULL,
+    thumbnail_url TEXT, media_url TEXT, language TEXT, source_chapters_json TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  )`);
+  legacy.run(`CREATE TABLE processing_jobs (
+    id TEXT PRIMARY KEY, item_id TEXT NOT NULL REFERENCES content_items(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL, input_fingerprint TEXT NOT NULL, implementation_version INTEGER NOT NULL,
+    state TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, next_retry_at TEXT,
+    lease_owner TEXT, lease_expires_at TEXT, started_at TEXT, last_error_code TEXT, last_error_detail TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(item_id, stage, input_fingerprint, implementation_version)
+  )`);
+  legacy.run('INSERT INTO content_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', ['youtube:legacy-job', 'youtube', 'legacy-job', 'https://www.youtube.com/watch?v=legacy-job', 'Legacy job', 'Creator', 60_000, null, null, 'en', null, NOW, NOW]);
+  legacy.run('INSERT INTO processing_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ['legacy-job-id', 'youtube:legacy-job', 'metadata', 'legacy-input', 1, 'queued', 0, null, null, null, null, null, null, NOW, NOW]);
+  saveDb(legacy, dbPath);
+  legacy.close();
+
+  const repo = await SqlJsContentRepository.open(dbPath);
+  const [job] = await repo.listJobs('youtube:legacy-job');
+  assert.deepEqual({ priority: job.priority, resourceClass: job.resourceClass, leaseToken: job.leaseToken, state: job.state }, { priority: 0, resourceClass: 'network', leaseToken: 0, state: 'queued' });
+  const leased = await repo.leaseNextJob('migration-worker', NOW);
+  assert.equal(leased?.leaseToken, 1);
+  await repo.close();
+});
+
 test('library search uses whole tokens, requires every query term, and preserves true transcript hits at the limit', async () => {
   const { item, transcript } = domainFixture();
   const { repo } = await repository();
@@ -199,12 +229,107 @@ test('leases jobs serially, records terminal attempts, retries, and recovers exp
   const running = await repo.leaseNextJob('worker-one', NOW, 1000);
   assert.equal(running?.state, 'running');
   assert.equal((await repo.leaseNextJob('worker-two', NOW)), null);
-  await repo.transitionJob(running!.id, { state: 'retry_wait', now: '2026-08-12T20:00:00.500Z', nextRetryAt: '2026-08-12T20:00:02.000Z', errorCode: 'network' });
+  await repo.transitionJob(running!.id, { state: 'retry_wait', now: '2026-08-12T20:00:00.500Z', nextRetryAt: '2026-08-12T20:00:02.000Z', errorCode: 'network', lease: { workerId: 'worker-one', token: running!.leaseToken } });
   assert.equal(await repo.leaseNextJob('worker-two', '2026-08-12T20:00:01.000Z'), null);
   const secondRun = await repo.leaseNextJob('worker-two', '2026-08-12T20:00:02.000Z', 1000);
   assert.equal(secondRun?.attemptCount, 2);
   assert.equal(await repo.recoverExpiredLeases('2026-08-12T20:00:04.000Z'), 1);
   assert.equal((await repo.listJobs(item.canonicalId))[0].state, 'queued');
+  await repo.close();
+});
+
+test('leases by resource class and priority, blocks dependencies, and atomically fans out children', async () => {
+  const { item } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  const parent = await repo.enqueueJob(item.canonicalId, 'metadata', 'parent', 1, NOW, { priority: 50, resourceClass: 'network' });
+  const dependent = await repo.enqueueJob(item.canonicalId, 'summary', 'dependent', 1, NOW, { priority: 100, resourceClass: 'model', dependsOnJobId: parent.id });
+  await repo.enqueueJob(item.canonicalId, 'metadata', 'low-priority', 1, NOW, { priority: 1, resourceClass: 'network' });
+
+  assert.equal(await repo.leaseNextJob('model-worker', NOW, 60_000, 'model'), null);
+  const leasedParent = await repo.leaseNextJob('network-worker', NOW, 60_000, 'network');
+  assert.equal(leasedParent?.id, parent.id);
+  assert.equal(leasedParent?.priority, 50);
+  await repo.completeJob(parent.id, {
+    state: 'succeeded', now: '2026-08-12T20:00:01.000Z',
+    lease: { workerId: 'network-worker', token: leasedParent!.leaseToken },
+  }, [{ stage: 'transcript', inputFingerprint: 'fanout', implementationVersion: 1, options: { priority: 75, resourceClass: 'network', dependsOnJobId: parent.id } }]);
+
+  const modelJob = await repo.leaseNextJob('model-worker', '2026-08-12T20:00:01.000Z', 60_000, 'model');
+  assert.equal(modelJob?.id, dependent.id);
+  const networkJob = await repo.leaseNextJob('network-worker', '2026-08-12T20:00:01.000Z', 60_000, 'network');
+  assert.equal(networkJob?.stage, 'transcript');
+  assert.equal(networkJob?.priority, 75);
+  await repo.close();
+});
+
+test('lease fencing rejects stale completion and stale artifact promotion after recovery', async () => {
+  const { item, transcript } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  const job = await repo.enqueueJob(item.canonicalId, 'transcript', 'fenced', 1, NOW);
+  const firstLease = await repo.leaseNextJob('worker-one', NOW, 1_000);
+  await repo.recoverExpiredLeases('2026-08-12T20:00:02.000Z');
+  const secondLease = await repo.leaseNextJob('worker-two', '2026-08-12T20:00:02.000Z', 60_000);
+  assert.equal(firstLease?.leaseToken, 1);
+  assert.equal(secondLease?.leaseToken, 2);
+
+  await assert.rejects(repo.transitionJob(job.id, {
+    state: 'succeeded', now: '2026-08-12T20:00:03.000Z',
+    lease: { workerId: 'worker-one', token: firstLease!.leaseToken },
+  }), /lease fence/);
+  await assert.rejects(repo.saveTranscript({
+    itemId: item.canonicalId, artifactHash: transcript.contentHash, artifactPath: '/stale.json', transcript, acquiredAt: NOW,
+  }, { jobId: job.id, workerId: 'worker-one', token: firstLease!.leaseToken }), /stale artifact write/);
+
+  await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: transcript.contentHash, artifactPath: '/current.json', transcript, acquiredAt: NOW }, {
+    jobId: job.id, workerId: 'worker-two', token: secondLease!.leaseToken,
+  });
+  await repo.completeJob(job.id, { state: 'succeeded', now: '2026-08-12T20:00:03.000Z', lease: { workerId: 'worker-two', token: secondLease!.leaseToken } });
+  assert.equal((await repo.getTranscript(item.canonicalId))?.artifactPath, '/current.json');
+  await repo.close();
+});
+
+test('atomic job completion rolls back artifact promotion when child fan-out fails', async () => {
+  const { item, transcript } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  const job = await repo.enqueueJob(item.canonicalId, 'transcript', 'atomic', 1, NOW);
+  const lease = await repo.leaseNextJob('worker', NOW);
+  await assert.rejects(repo.completeJob(job.id, {
+    state: 'succeeded', now: '2026-08-12T20:00:01.000Z', lease: { workerId: 'worker', token: lease!.leaseToken },
+  }, [{ stage: 'chapters', inputFingerprint: 'invalid-child', implementationVersion: 1, options: { dependsOnJobId: 'missing-parent' } }], {
+    kind: 'transcript', item, transcript: { itemId: item.canonicalId, artifactHash: transcript.contentHash, artifactPath: '/atomic.json', transcript, acquiredAt: NOW },
+  }), /dependency must exist/);
+  assert.equal(await repo.getTranscript(item.canonicalId), null);
+  assert.equal((await repo.listJobs(item.canonicalId))[0].state, 'running');
+  await repo.close();
+});
+
+test('projects capabilities from current promoted artifacts instead of optional job states', async () => {
+  const { item, transcript } = domainFixture();
+  const { repo } = await repository();
+  await repo.upsertItem(item);
+  assert.deepEqual(await repo.itemCapabilities(item.canonicalId), {
+    metadata: true, text: false, exactSearch: false, chapters: false, summary: false, chat: false, semantic: false, clustered: false,
+  });
+  await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: transcript.contentHash, artifactPath: '/fixture.json', transcript, acquiredAt: NOW });
+  assert.deepEqual(await repo.itemCapabilities(item.canonicalId), {
+    metadata: true, text: true, exactSearch: true, chapters: false, summary: false, chat: true, semantic: false, clustered: false,
+  });
+  const page = buildKnowledgePageArtifact(structuredClone(fixture) as KnowledgePageFixtureInput);
+  await repo.replaceChapters({ itemId: item.canonicalId, transcriptContentHash: transcript.contentHash, artifactHash: 'capability-chapters', chapters: page.chapters });
+  await repo.saveSummary({ itemId: item.canonicalId, transcriptContentHash: transcript.contentHash, chaptersArtifactHash: 'capability-chapters', overview: page.overview, details: page.details, provider: 'fixture', promptVersion: 1, artifactHash: 'capability-summary', validationState: 'supported', createdAt: NOW, promotedAt: NOW });
+  assert.deepEqual(await repo.itemCapabilities(item.canonicalId), {
+    metadata: true, text: true, exactSearch: true, chapters: true, summary: true, chat: true, semantic: false, clustered: false,
+  });
+
+  const replacement = normalizeTranscript('en', transcript.provenance, [{ startMs: 0, endMs: 1_000, text: 'A replacement invalidates derived artifacts.' }]);
+  await repo.saveTranscript({ itemId: item.canonicalId, artifactHash: replacement.contentHash, artifactPath: '/replacement.json', transcript: replacement, acquiredAt: NOW });
+  const capabilities = await repo.itemCapabilities(item.canonicalId);
+  assert.equal(capabilities.text, true);
+  assert.equal(capabilities.summary, false);
+  assert.equal(capabilities.chapters, false);
   await repo.close();
 });
 
@@ -216,13 +341,13 @@ test('projects aggregate item status from required current jobs', async () => {
     const job = await repo.enqueueJob(item.canonicalId, stage, `${stage}-input`, 1, NOW);
     const running = await repo.leaseNextJob('worker', NOW);
     assert.equal(running?.id, job.id);
-    await repo.transitionJob(job.id, { state: 'succeeded', now: `2026-08-12T20:00:0${stage === 'metadata' ? 1 : 2}.000Z` });
+    await repo.transitionJob(job.id, { state: 'succeeded', now: `2026-08-12T20:00:0${stage === 'metadata' ? 1 : 2}.000Z`, lease: { workerId: 'worker', token: running!.leaseToken } });
   }
   assert.equal(await repo.itemStatus(item.canonicalId, ['metadata', 'transcript']), 'ready');
   const summary = await repo.enqueueJob(item.canonicalId, 'summary', 'summary-input', 1, '2026-08-12T20:00:03.000Z');
   assert.equal(await repo.itemStatus(item.canonicalId, ['metadata', 'transcript', 'summary']), 'processing');
   const running = await repo.leaseNextJob('worker', '2026-08-12T20:00:03.000Z');
-  await repo.transitionJob(running!.id, { state: 'blocked', now: '2026-08-12T20:00:04.000Z', errorCode: 'provider_missing' });
+  await repo.transitionJob(running!.id, { state: 'blocked', now: '2026-08-12T20:00:04.000Z', errorCode: 'provider_missing', lease: { workerId: 'worker', token: running!.leaseToken } });
   assert.equal(summary.id, running!.id);
   assert.equal(await repo.itemStatus(item.canonicalId, ['metadata', 'transcript', 'summary']), 'blocked');
   await repo.close();

@@ -1,4 +1,4 @@
-import type { ChatAnswer, ContentSearchHit, KnowledgeItem, RelatedContentHit, TranscriptSegment } from './types';
+import type { CaptureReceipt, ChatAnswer, ContentSearchHit, CorpusAnswer, KnowledgeItem, MemoryConnection, MemoryTopic, RelatedContentHit, SyncHealth, TodayMemory, TranscriptSegment } from './types';
 
 let csrfToken: string | null = null;
 
@@ -86,6 +86,60 @@ export async function askItem(id: string, question: string): Promise<ChatAnswer>
     headers: { 'Content-Type': 'application/json', 'X-FieldTheory-CSRF': csrf },
     body: JSON.stringify({ question }),
   }));
+}
+
+async function optionalJson<T>(path: string, init?: RequestInit): Promise<T | null> {
+  try {
+    const response = await fetch(path, { credentials: 'same-origin', ...init });
+    if (!response.ok) return null;
+    return await response.json() as T;
+  } catch {
+    return null;
+  }
+}
+
+export async function getToday(): Promise<TodayMemory[]> {
+  const body = await optionalJson<{ data: TodayMemory[] }>('/api/v1/memory/today');
+  return body?.data ?? [];
+}
+
+export async function getTopics(): Promise<MemoryTopic[]> {
+  const body = await optionalJson<{ data: MemoryTopic[] }>('/api/v1/memory/topics');
+  return body?.data ?? [];
+}
+
+export async function getConnections(): Promise<MemoryConnection[]> {
+  const body = await optionalJson<{ data: MemoryConnection[] }>('/api/v1/memory/connections');
+  return body?.data ?? [];
+}
+
+export async function getSyncHealth(): Promise<SyncHealth | null> {
+  return optionalJson<SyncHealth>('/api/v1/memory/sync/status');
+}
+
+export async function addCapture(url: string): Promise<CaptureReceipt> {
+  const csrf = await sessionCsrf();
+  const response = await fetch('/api/v1/memory/captures', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-FieldTheory-CSRF': csrf },
+    body: JSON.stringify({ url }),
+  });
+  return responseJson<CaptureReceipt>(response);
+}
+
+export async function askCorpus(question: string, scopes: Record<string, string>): Promise<CorpusAnswer | null> {
+  const csrf = await sessionCsrf();
+  return optionalJson<CorpusAnswer>('/api/v1/memory/corpus/ask', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-FieldTheory-CSRF': csrf }, body: JSON.stringify({ question, scopes }),
+  });
+}
+
+export async function recordMemoryFeedback(id: string, action: 'keep' | 'dismiss' | 'applied' | 'useful' | 'obvious' | 'wrong'): Promise<boolean> {
+  const csrf = await sessionCsrf();
+  const result = await optionalJson<{ recorded: boolean }>(`/api/v1/memory/${encodeURIComponent(id)}/feedback`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-FieldTheory-CSRF': csrf }, body: JSON.stringify({ action }),
+  });
+  return result?.recorded ?? false;
 }
 
 async function jobMutation(id: string, action: 'retry' | 'cancel', jobId: string): Promise<void> {

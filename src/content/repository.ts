@@ -1,5 +1,5 @@
 import type { DiscoveredContentItem, KnowledgeClaim, KnowledgeClaimInput, RawChapter, TranscriptArtifact } from './types.js';
-import type { ItemProcessingStatus, JobState, ProcessingJobSnapshot, ProcessingStage } from '../jobs/state-machine.js';
+import type { ItemProcessingStatus, JobEnqueueOptions, JobResourceClass, JobState, ProcessingJobSnapshot, ProcessingStage } from '../jobs/state-machine.js';
 
 export interface StoredContentItem extends DiscoveredContentItem {
   title: string;
@@ -132,33 +132,66 @@ export interface JobTransitionInput {
   nextRetryAt?: string;
   errorCode?: string;
   errorDetail?: string;
+  lease?: { workerId: string; token: number };
 }
+
+export interface ContentCapabilities {
+  metadata: boolean;
+  text: boolean;
+  exactSearch: boolean;
+  chapters: boolean;
+  summary: boolean;
+  chat: boolean;
+  semantic: boolean;
+  clustered: boolean;
+}
+
+export interface ChildJobInput {
+  stage: ProcessingStage;
+  inputFingerprint: string;
+  implementationVersion: number;
+  options?: JobEnqueueOptions;
+}
+
+export interface JobLeaseFence {
+  jobId: string;
+  workerId: string;
+  token: number;
+}
+
+export type JobCompletionMutation =
+  | { kind: 'metadata'; item: StoredContentItem }
+  | { kind: 'transcript'; item: StoredContentItem; transcript: TranscriptRecord }
+  | { kind: 'chapters'; chapters: ChapterRecord }
+  | { kind: 'summary'; summary: SummaryRecord };
 
 export interface ContentRepository {
   upsertItem(item: StoredContentItem): Promise<void>;
   getItem(itemId: string): Promise<StoredContentItem | null>;
   listItems(limit?: number, offset?: number): Promise<StoredContentItem[]>;
-  saveTranscript(record: TranscriptRecord): Promise<void>;
+  saveTranscript(record: TranscriptRecord, fence?: JobLeaseFence): Promise<void>;
   getTranscript(itemId: string): Promise<TranscriptRecord | null>;
   searchTranscript(itemId: string, query: string, limit?: number): Promise<TranscriptSearchHit[]>;
   searchContent(query: string, limit?: number): Promise<ContentSearchHit[]>;
   relatedContent(itemId: string, limit?: number): Promise<RelatedContentHit[]>;
-  replaceChapters(record: ChapterRecord): Promise<void>;
+  replaceChapters(record: ChapterRecord, fence?: JobLeaseFence): Promise<void>;
   getChapters(itemId: string): Promise<ChapterRecord | null>;
-  saveSummary(record: SummaryRecord): Promise<void>;
+  saveSummary(record: SummaryRecord, fence?: JobLeaseFence): Promise<void>;
   getSummary(itemId: string): Promise<SummaryRecord | null>;
   getSynthesisChunk(artifactId: string): Promise<SynthesisChunkRecord | null>;
   saveSynthesisChunk(record: SynthesisChunkRecord): Promise<void>;
   putNote(itemId: string, markdown: string, expectedVersion: number | null, now: string): Promise<ItemNote>;
   getNote(itemId: string): Promise<ItemNote | null>;
-  enqueueJob(itemId: string, stage: ProcessingStage, inputFingerprint: string, implementationVersion: number, now: string): Promise<ProcessingJobSnapshot>;
-  leaseNextJob(workerId: string, now: string, leaseMs?: number): Promise<ProcessingJobSnapshot | null>;
-  renewJobLease(jobId: string, workerId: string, now: string, leaseMs?: number): Promise<ProcessingJobSnapshot>;
+  enqueueJob(itemId: string, stage: ProcessingStage, inputFingerprint: string, implementationVersion: number, now: string, options?: JobEnqueueOptions): Promise<ProcessingJobSnapshot>;
+  leaseNextJob(workerId: string, now: string, leaseMs?: number, resourceClass?: JobResourceClass): Promise<ProcessingJobSnapshot | null>;
+  renewJobLease(jobId: string, workerId: string, leaseToken: number, now: string, leaseMs?: number): Promise<ProcessingJobSnapshot>;
   transitionJob(jobId: string, input: JobTransitionInput): Promise<ProcessingJobSnapshot>;
+  completeJob(jobId: string, input: JobTransitionInput & { state: 'succeeded'; lease: { workerId: string; token: number } }, children?: ChildJobInput[], mutation?: JobCompletionMutation): Promise<ProcessingJobSnapshot>;
   retryJob(jobId: string, now: string): Promise<ProcessingJobSnapshot>;
   cancelJob(jobId: string, now: string): Promise<ProcessingJobSnapshot>;
   listJobs(itemId?: string): Promise<ProcessingJobSnapshot[]>;
   itemStatus(itemId: string, requiredStages: readonly ProcessingStage[]): Promise<ItemProcessingStatus>;
+  itemCapabilities(itemId: string): Promise<ContentCapabilities>;
   recoverExpiredLeases(now: string): Promise<number>;
   setLongTranscriptionOverride(itemId: string, enabled: boolean): Promise<void>;
   hasLongTranscriptionOverride(itemId: string): Promise<boolean>;

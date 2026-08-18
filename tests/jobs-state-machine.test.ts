@@ -32,7 +32,8 @@ test('input fingerprints are stable, ordered, and stage-version specific', () =>
 test('status projection prioritizes active work, cancellation, blocking, and failure', () => {
   const job = (state: JobState, stage: ProcessingJobSnapshot['stage']): ProcessingJobSnapshot => ({
     id: `${stage}-${state}`, itemId: 'youtube:id', stage, inputFingerprint: 'input', implementationVersion: 1,
-    state, attemptCount: 1, createdAt: '2026-08-12T20:00:00.000Z', updatedAt: '2026-08-12T20:00:00.000Z',
+    state, attemptCount: 1, priority: 0, resourceClass: 'network', leaseToken: 0,
+    createdAt: '2026-08-12T20:00:00.000Z', updatedAt: '2026-08-12T20:00:00.000Z',
   });
   assert.equal(projectItemStatus([], ['metadata']), 'discovered');
   assert.equal(projectItemStatus([job('queued', 'metadata')], ['metadata']), 'processing');
